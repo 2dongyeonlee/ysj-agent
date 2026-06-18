@@ -1,0 +1,39 @@
+# 사장님봇 wrangler 설정 템플릿
+# 새 Cloudflare 계정에서 리소스 생성 후 <...> 를 채워 wrangler.toml 로 복사.
+# KOH봇 리소스 ID 재사용 금지 (데이터 섞임).
+
+name = "pres-ai-bot"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+keep_vars = true
+
+# Secrets (커밋 금지):
+#   wrangler secret put TELEGRAM_BOT_TOKEN
+#   wrangler secret put ANTHROPIC_API_KEY
+#   wrangler secret put TAVILY_API_KEY      # 뉴스·웹검색 (월 1000건 무료)
+
+[vars]
+BRIEFING_CHAT_ID = "<수집_방ID들_쉼표구분>"   # 단체방·1:1 DM 방 ID
+BRIEFING_TARGET_ID = "<브리핑_받을_방ID>"      # 비우면 첫 방으로 발송
+BOT_USERNAME = "<새_봇_username>"
+
+[triggers]
+crons = ["0 23 * * 0-4"]   # 평일 KST 08:00 (UTC 23:00)
+
+[[d1_databases]]
+binding = "DB"
+database_name = "pres-ai-db"
+database_id = "<새_D1_id>"
+
+[[kv_namespaces]]
+binding = "STATE"
+id = "<새_KV_id>"
+
+# ── R2 (자료 백필·영구보존용) ─────────────────────────
+# 지금은 file_id 로 충분해 비활성. 과거 자료를 대량 올리거나
+# 봇 교체 대비 영구보존이 필요해지면 아래 주석을 풀고 bucket 생성:
+#   wrangler r2 bucket create pres-ai-files
+# [[r2_buckets]]
+# binding = "FILES"
+# bucket_name = "pres-ai-files"
