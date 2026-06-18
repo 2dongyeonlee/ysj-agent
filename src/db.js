@@ -94,3 +94,12 @@ export async function searchEngagementsByTopic(env, topic) {
   ).bind(`%${topic}%`).all();
   return results || [];
 }
+
+// 전체 방의 메시지 조회 (대외정보/프로젝트 브리핑용)
+export async function getAllMessagesSince(env, sinceIso) {
+  const { results } = await env.DB.prepare(
+    `SELECT chat_id, sender, text, created_at FROM messages
+     WHERE created_at >= ? ORDER BY created_at ASC`
+  ).bind(sinceIso).all();
+  return results || [];
+}

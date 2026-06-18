@@ -1,5 +1,4 @@
-// index.js — 엔트리포인트. 라우팅만 (얇게 유지). 로직은 각 모듈에 위임.
-
+// index.js — entry point. routing only (keep thin). logic lives in each module.
 import { collectMessage } from "./collect.js";
 import { runMorningBriefing, runContactBriefing } from "./briefing.js";
 import { handleRetrieve } from "./retrieve.js";
@@ -7,6 +6,10 @@ import { handleMeetingPrep } from "./prep.js";
 import { summarizeFile } from "./summarize.js";
 import { handleQA } from "./qa.js";
 import { handleSettings } from "./settings.js";
+import { runWeeklyReport, runHighLevelDraft } from "./report.js";
+import { runInfoBriefing } from "./info.js";
+import { runProjectBriefing } from "./project.js";
+import { handleVoice } from "./voice.js";
 import { sendMessage } from "./telegram.js";
 
 export default {
@@ -15,21 +18,23 @@ export default {
     let update;
     try { update = await request.json(); } catch { return new Response("ok"); }
 
-    // 봇이 방에 추가/제거됨 (운영 감지)
-    if (update.my_chat_member) {
-      // TODO: handleChatMemberUpdate (KOH봇 이식) — 방 등록/해제
-      return new Response("ok");
-    }
+    if (update.my_chat_member) return new Response("ok");
 
     const msg = update.message;
     if (!msg) return new Response("ok");
     try { await route(env, msg); }
-    catch (e) { console.error("route error", e?.stack || e); }
+    catch (e) { console.error("route error", (e && e.stack) || e); }
     return new Response("ok");
   },
 
-  async scheduled(_event, env, ctx) {
-    ctx.waitUntil(runMorningBriefing(env)); // 기능1: 매일 아침 자동
+  async scheduled(event, env, ctx) {
+    // morning: daily info briefing + contact briefing; weekly project on Monday
+    ctx.waitUntil((async function () {
+      await runMorningBriefing(env);
+      await runInfoBriefing(env, null, 1);            // daily external-affairs
+      const kstDay = new Date(Date.now() + 9 * 3600000).getDay();
+      if (kstDay === 1) await runProjectBriefing(env, null, 7); // Monday weekly
+    })());
   },
 };
 
@@ -37,42 +42,43 @@ async function route(env, msg) {
   const chatId = msg.chat.id;
   const text = (msg.text || msg.caption || "").trim();
 
-  // 중복 방지
-  const key = `msg:${chatId}:${msg.message_id}`;
+  const key = "msg:" + chatId + ":" + msg.message_id;
   if (await env.STATE.get(key)) return;
   await env.STATE.put(key, "1", { expirationTtl: 60 });
 
-  // 운영자 명령: /설정 (김선영이 봇 동작 조정)
-  if (text.startsWith("/설정")) {
-    const reply = await handleSettings(env, text.replace("/설정", "").trim());
+  // commands (ASCII to avoid encoding issues)
+  if (text.startsWith("/set")) {
+    const reply = await handleSettings(env, text.replace("/set", "").trim());
     return sendMessage(env, chatId, reply);
   }
+  if (text === "/contacts") return runContactBriefing(env, chatId);
+  if (text.startsWith("/info")) return runInfoBriefing(env, chatId, 1);
+  if (text.startsWith("/project")) return runProjectBriefing(env, chatId, 7);
+  if (text.startsWith("/weekly")) return runWeeklyReport(env, chatId, 7);
+  if (text.startsWith("/report")) return runHighLevelDraft(env, chatId, 14);
 
-  // [입구] 모든 메시지·자료 무음 수집
+  // collect every message/file silently
   await collectMessage(env, msg);
 
-  // 파일/이미지: 저장은 collect 가, 요약은 여기서.
-  // 1:1 DM이거나 캡션에 봇 멘션 있으면 요약 응답, 아니면 무음 저장.
+  // voice/audio: transcribe -> summarize (always reply in DM, or when mentioned)
+  if (msg.voice || msg.audio || (msg.document && /audio|ogg|mp3|m4a|wav/i.test((msg.document.mime_type || "")))) {
+    return handleVoice(env, chatId, msg);
+  }
+
+  // file/image: summarize replies when targeted
   if (msg.document || (msg.photo && msg.photo.length)) {
     const botUsername = env.BOT_USERNAME || "";
     const isDM = msg.chat.type === "private";
-    const replyToUser = isDM || (botUsername && text.includes(`@${botUsername}`));
+    const replyToUser = isDM || (botUsername && text.indexOf("@" + botUsername) !== -1);
     await summarizeFile(env, chatId, msg, replyToUser);
     return;
   }
 
-  // [분기] 봇에게 거는 요청
-  //  기능3: /접촉 명령
-  if (text === "/접촉") return runContactBriefing(env, chatId);
-
-  //  기능4: "오늘 OO 만날건데" 패턴 — [stub, 추후 연결]
-  //  기능2: 자료 요청 패턴 — [stub, 추후 연결]
-
-  //  일반 질의응답: 1:1 DM은 항상 답, 단체방은 봇 멘션 시만
+  // general QA: DM always; group only when mentioned
   const botUsername = env.BOT_USERNAME || "";
   const isDM = msg.chat.type === "private";
-  const isMentioned = text.includes(`@${botUsername}`);
+  const isMentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
   if (isDM || isMentioned) {
-    return handleQA(env, chatId, text.replace(`@${botUsername}`, "").trim());
+    return handleQA(env, chatId, text.split("@" + botUsername).join("").trim());
   }
 }

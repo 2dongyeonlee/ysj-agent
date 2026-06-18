@@ -1,16 +1,71 @@
-// extract.js — 메시지/파일에서 "누구를 만났는지"를 추출해 engagements 에 축적.
-// collect 중 자동 호출. 기능3·4(접촉/만나기전 브리핑)의 데이터를 여기서 쌓는다.
-// [P3 stub] 오늘은 골격만. 브리핑(기능1) 검증 후 채운다.
+// extract.js — detect "who was met" from messages and accumulate into engagements.
+// Called from collect. Feeds contact/meeting-prep briefings.
 
-// import { callClaude, MODEL_FAST } from "./claude.js";
-// import { findContact, insertContact, insertEngagement } from "./db.js";
+import { callClaude, MODEL_FAST } from "./claude.js";
+import { findContact, insertContact, insertEngagement } from "./db.js";
 
-// 메시지가 "접촉 언급"인지 가볍게 판별 → 맞으면 추출·저장
+// 1st-pass keyword filter (cheap). Only run LLM when a meeting signal is present.
+const SIGNAL = /(미팅|면담|오찬|만찬|대면|만났|만나|회동|간담|통화|방문|접견|참석)/;
+
+const EXTRACT_SYSTEM =
+  "You extract meeting/contact records from a Korean message. " +
+  "Return ONLY a JSON object, no other text, no markdown fences. " +
+  "If the message does not describe an actual meeting/contact with a person, return {\"found\":false}. " +
+  "Otherwise return: " +
+  "{\"found\":true,\"name\":\"person name\",\"org\":\"affiliation\",\"topic\":\"subject\",\"channel\":\"대면/통화/오찬/행사 etc\",\"summary\":\"1-line Korean summary\",\"followup\":\"next action or empty\"}. " +
+  "All string values in Korean. Use empty string for unknown fields.";
+
 export async function maybeExtractEngagement(env, msg, text) {
-  // TODO(P3):
-  //  1) 1차 필터: '만났다/미팅/통화/면담' 등 신호어 또는 LLM 짧은 판별
-  //  2) callClaude 로 {인물, 소속, 주제, 일시, 채널, 핵심, 후속} 추출
-  //  3) findContact 별칭매칭 → 없으면 insertContact
-  //  4) insertEngagement (source_type='message', source_ref=message_id)
-  return null; // 아직 미구현 (collect 는 정상 동작, 추출만 보류)
+  if (!text || !SIGNAL.test(text)) return null; // cheap filter
+  if (text.length < 8) return null;
+
+  let parsed;
+  try {
+    const raw = await callClaude(env, "메시지:\n" + text.slice(0, 1500), EXTRACT_SYSTEM, MODEL_FAST, 400);
+    parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
+  } catch (e) {
+    console.error("extract parse error", e && e.message);
+    return null;
+  }
+
+  if (!parsed || !parsed.found || !parsed.name) return null;
+
+  // contact match by name/alias; create if missing
+  let contactId;
+  try {
+    const hits = await findContact(env, parsed.name);
+    if (hits && hits.length) {
+      contactId = hits[0].id;
+    } else {
+      contactId = await insertContact(env, {
+        name: parsed.name,
+        org: parsed.org || "",
+        rel_type: "",
+        aliases: "",
+      });
+    }
+  } catch (e) {
+    console.error("contact match error", e && e.message);
+    return null;
+  }
+
+  // insert engagement
+  try {
+    await insertEngagement(env, {
+      contact_id: contactId,
+      met_at: new Date().toISOString().slice(0, 10),
+      topic: parsed.topic || "",
+      channel: parsed.channel || "",
+      summary: parsed.summary || "",
+      followup: parsed.followup || "",
+      source_type: "message",
+      source_ref: String(msg.message_id || ""),
+      raw_input: text.slice(0, 1000),
+      created_by: (msg.from && msg.from.first_name) || "",
+    });
+    console.log("engagement saved:", parsed.name, parsed.topic);
+  } catch (e) {
+    console.error("insertEngagement error", e && e.message);
+  }
+  return contactId;
 }

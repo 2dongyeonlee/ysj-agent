@@ -1,20 +1,17 @@
-// docparse.js — 파일에서 텍스트 추출. summarize/retrieve 공용 헬퍼.
+// docparse.js — extract text from files. shared helper for summarize/retrieve.
 
 const ANTHROPIC = "https://api.anthropic.com/v1/messages";
 
-function tgFileUrl(env, filePath) {
-  return `https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${filePath}`;
-}
-
 async function getFileUrl(env, fileId) {
-  const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`);
+  const res = await fetch(
+    `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`
+  );
   const data = await res.json();
   if (!data.ok) throw new Error("getFile failed");
-  return tgFileUrl(env, data.result.file_path);
+  return `https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${data.result.file_path}`;
 }
 
-// 이미지 → Claude Vision 설명
-async function describeImage(env, url, caption = "") {
+async function describeImage(env, url, caption) {
   const imgRes = await fetch(url);
   const buf = await imgRes.arrayBuffer();
   let binary = "";
@@ -37,7 +34,7 @@ async function describeImage(env, url, caption = "") {
         role: "user",
         content: [
           { type: "image", source: { type: "base64", media_type: ct, data: b64 } },
-          { type: "text", text: `이 이미지 내용을 한국어 플레인 텍스트로 설명. 마크다운 금지.\n글자·수치 있으면 그대로 읽고, 문서·슬라이드면 제목·날짜·핵심수치·고유명사를 추출.${caption ? `\n설명: ${caption}` : ""}` },
+          { type: "text", text: "Describe this image in Korean plain text. No markdown. If it contains text or numbers, read them. If it is a document or slide, extract title, date, key figures, and proper nouns." + (caption ? ("\nCaption: " + caption) : "") },
         ],
       }],
     }),
@@ -46,11 +43,10 @@ async function describeImage(env, url, caption = "") {
   return (data.content || []).filter(c => c.type === "text").map(c => c.text).join("\n") || "";
 }
 
-// PDF → Claude document 분석
 async function extractPdf(env, url) {
   const res = await fetch(url);
   const buf = await res.arrayBuffer();
-  if (buf.byteLength > 32 * 1024 * 1024) return "[파일이 너무 큽니다]";
+  if (buf.byteLength > 32 * 1024 * 1024) return "[file too large]";
   let binary = "";
   const bytes = new Uint8Array(buf);
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
@@ -70,13 +66,13 @@ async function extractPdf(env, url) {
         role: "user",
         content: [
           { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } },
-          { type: "text", text: "이 문서의 제목·날짜·작성자·핵심내용·고유명사를 한국어 플레인 텍스트로 추출. 마크다운 금지." },
+          { type: "text", text: "Extract the title, date, author, key content and proper nouns from this document in Korean plain text. No markdown." },
         ],
       }],
     }),
   });
   const data = await r.json();
-  return (data.content || []).filter(c => c.type === "text").map(c => c.text).join("\n") || "[문서 분석 실패]";
+  return (data.content || []).filter(c => c.type === "text").map(c => c.text).join("\n") || "[document parse failed]";
 }
 
 export async function extractText(env, msg) {
@@ -95,11 +91,10 @@ export async function extractText(env, msg) {
       if (/\.pdf$/i.test(name)) {
         return await extractPdf(env, url);
       }
-      // PPTX/DOCX/XLSX 등은 다음 단계(B)에서 추가. 지금은 미지원 안내.
-      return `[현재 PDF·이미지만 지원합니다: ${name}]`;
+      return "[only PDF and image files are supported: " + name + "]";
     }
   } catch (e) {
-    console.error("extractText error", e?.message || e);
+    console.error("extractText error", e && e.message);
     return "";
   }
   return "";
