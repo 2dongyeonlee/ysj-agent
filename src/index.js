@@ -51,15 +51,28 @@ async function route(env, msg) {
   // [입구] 모든 메시지·자료 무음 수집
   await collectMessage(env, msg);
 
-  // 파일/이미지: 저장은 collect 가, 요약은 여기서 (봇 대상이면 응답)
+  // 파일/이미지: 저장은 collect 가, 요약은 여기서.
+  // 1:1 DM이거나 캡션에 봇 멘션 있으면 요약 응답, 아니면 무음 저장.
   if (msg.document || (msg.photo && msg.photo.length)) {
-    // await summarizeFile(env, chatId, msg, isQueryToBot(text));  // [stub]
+    const botUsername = env.BOT_USERNAME || "";
+    const isDM = msg.chat.type === "private";
+    const replyToUser = isDM || (botUsername && text.includes(`@${botUsername}`));
+    await summarizeFile(env, chatId, msg, replyToUser);
     return;
   }
 
-  // [분기] 봇에게 거는 요청 — stub 채우며 순서대로 연결
-  //  기능4: if (만나기전 패턴)   return handleMeetingPrep(env, chatId, 인물명);
-  //  기능2: if (자료요청 패턴)   return handleRetrieve(env, chatId, text, msg);
-  //  기능3: if (text==="/접촉")  return runContactBriefing(env, chatId);
-  //  일반:  if (봇 대상 질문)     return handleQA(env, chatId, text);
+  // [분기] 봇에게 거는 요청
+  //  기능3: /접촉 명령
+  if (text === "/접촉") return runContactBriefing(env, chatId);
+
+  //  기능4: "오늘 OO 만날건데" 패턴 — [stub, 추후 연결]
+  //  기능2: 자료 요청 패턴 — [stub, 추후 연결]
+
+  //  일반 질의응답: 1:1 DM은 항상 답, 단체방은 봇 멘션 시만
+  const botUsername = env.BOT_USERNAME || "";
+  const isDM = msg.chat.type === "private";
+  const isMentioned = text.includes(`@${botUsername}`);
+  if (isDM || isMentioned) {
+    return handleQA(env, chatId, text.replace(`@${botUsername}`, "").trim());
+  }
 }
