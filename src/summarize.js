@@ -4,6 +4,7 @@ import { extractText } from "./docparse.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
+import { extractInsight } from "./insight.js";
 
 const SUMMARY_SYSTEM = PERSONA_STYLE + "\n\n" +
   "[작업] 업로드된 문서를 염 사장 관점에서 요약.\n" +
@@ -15,6 +16,12 @@ const SUMMARY_SYSTEM = PERSONA_STYLE + "\n\n" +
 export async function summarizeFile(env, chatId, msg, replyToUser = false) {
   const text = await extractText(env, msg);
   if (!text) return;
+  await extractInsight(env, {
+    chatId: msg.chat.id,
+    sourceType: "file",
+    sourceRef: (msg.document && msg.document.file_id) || "",
+    text,
+  });
   try {
     await env.DB.prepare(
       "UPDATE files SET text = ? WHERE id = (SELECT id FROM files WHERE chat_id = ? ORDER BY id DESC LIMIT 1)"

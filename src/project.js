@@ -1,7 +1,7 @@
 // project.js — weekly project status. Categories: Nexus/PJT A/서남권/G건/용인 Pull-in/성과금/TM PI/그룹 광고/PR 중요기사/기타.
 // Triggered by /project or weekly schedule. Source: all collected messages.
 
-import { getAllMessagesSince } from "./db.js";
+import { getInsightsSince } from "./db.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
@@ -21,13 +21,16 @@ function sinceDaysIso(days) {
 }
 
 export async function runProjectBriefing(env, chatId, days) {
-  const rows = await getAllMessagesSince(env, sinceDaysIso(days || 7));
+  const rows = (await getInsightsSince(env, sinceDaysIso(days || 7), {}))
+    .filter(function (r) { return r.project; });
   if (!rows || !rows.length) {
     if (chatId) await sendMessage(env, chatId, "최근 정리할 프로젝트 현황이 없습니다.");
     return;
   }
-  const digest = rows.map(function (r) { return "[" + r.sender + "] " + r.text; }).join("\n").slice(0, 14000);
-  const out = await callClaude(env, "수집 메시지:\n" + digest, PROJECT_SYSTEM, MODEL_SMART, 2500);
+  const digest = rows.map(function (r) {
+    return "[" + r.project + "] " + r.summary + (r.people ? " / " + r.people : "") + (r.schedule ? " / 일정: " + r.schedule : "");
+  }).join("\n").slice(0, 14000);
+  const out = await callClaude(env, "분류된 프로젝트 현황:\n" + digest, PROJECT_SYSTEM, MODEL_SMART, 2500);
   if (chatId) {
     await sendMessage(env, chatId, out);
   } else {

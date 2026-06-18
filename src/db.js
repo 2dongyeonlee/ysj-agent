@@ -103,3 +103,26 @@ export async function getAllMessagesSince(env, sinceIso) {
   ).bind(sinceIso).all();
   return results || [];
 }
+
+export async function getInsightsSince(env, sinceIso, filter = {}) {
+  const where = ["created_at >= ?"];
+  const params = [sinceIso];
+  if (filter.category) {
+    where.push("category = ?");
+    params.push(filter.category);
+  }
+  if (filter.project) {
+    where.push("project = ?");
+    params.push(filter.project);
+  }
+  if (filter.hasSchedule) {
+    where.push("schedule != ''");
+  }
+  const { results } = await env.DB.prepare(
+    `SELECT schedule, category, project, summary, people, created_at
+     FROM insights
+     WHERE ${where.join(" AND ")}
+     ORDER BY created_at DESC LIMIT 100`
+  ).bind(...params).all();
+  return results || [];
+}

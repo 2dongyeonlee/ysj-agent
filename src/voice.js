@@ -4,6 +4,7 @@
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
+import { extractInsight } from "./insight.js";
 
 async function getFileUrl(env, fileId) {
   const res = await fetch(
@@ -58,6 +59,12 @@ export async function handleVoice(env, chatId, msg) {
     return sendMessage(env, chatId, "받아쓰기에 실패했습니다. 다시 시도해 주세요.");
   }
   if (!transcript) return sendMessage(env, chatId, "음성에서 텍스트를 추출하지 못했습니다.");
+  await extractInsight(env, {
+    chatId: msg.chat.id,
+    sourceType: "voice",
+    sourceRef: voice.file_id,
+    text: transcript,
+  });
   try {
     await env.DB.prepare(
       "INSERT INTO files (chat_id, file_id, filename, text) VALUES (?, ?, ?, ?)"

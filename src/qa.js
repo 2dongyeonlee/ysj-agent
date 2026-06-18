@@ -1,7 +1,7 @@
 // qa.js — general Q&A. answers when the bot is addressed.
 
 import { searchMessages } from "./db.js";
-import { callClaude, MODEL_SMART } from "./claude.js";
+import { callClaude, MODEL_FAST, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA } from "./persona.js";
 
@@ -36,6 +36,8 @@ export async function handleQA(env, chatId, question) {
       console.error("searchMessages error", e && e.message);
     }
   }
-  const answer = await callClaude(env, question + context, QA_SYSTEM, MODEL_SMART, 1000);
+  const useSmart = (context !== "") || (question.length >= 30);
+  const model = useSmart ? MODEL_SMART : MODEL_FAST;
+  const answer = await callClaude(env, question + context, QA_SYSTEM, model, 1000);
   await sendMessage(env, chatId, answer);
 }

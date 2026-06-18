@@ -51,6 +51,9 @@ async function route(env, msg) {
     const reply = await handleSettings(env, text.replace("/set", "").trim());
     return sendMessage(env, chatId, reply);
   }
+  if (text === "/help" || text === "/start") {
+    return sendMessage(env, chatId, "📋 명령어\n/info — 대외정보 요약 (무슨 이슈가 있나)\n/contacts — 면담 이력 (누구를 만났나)\n/project — 프로젝트 현황\n/weekly — 주간 업무보고\n/report — 보고 초안 (윗선 보고용)\n/set 시간 08:00 — 설정\n\n파일·녹음·자료를 보내면 자동으로 요약·분류됩니다.");
+  }
   if (text === "/contacts") return runContactBriefing(env, chatId);
   if (text.startsWith("/info")) return runInfoBriefing(env, chatId, 1);
   if (text.startsWith("/project")) return runProjectBriefing(env, chatId, 7);

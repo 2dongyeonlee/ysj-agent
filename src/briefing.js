@@ -44,5 +44,5 @@ export async function runContactBriefing(env, chatId, days = 7) {
   }
   const digest = rows.map((r) => `${r.met_at} ${r.name || "?"}(${r.org || ""}) ${r.topic} ${r.summary}`).join("\n");
   const summary = await callClaude(env, digest, CONTACT_SYSTEM, MODEL_SMART, 1200);
-  await sendMessage(env, chatId, `🤝 최근 ${days}일 접촉\n\n${summary}`);
+  await sendMessage(env, chatId, `📇 <b>면담 이력</b>\n\n${summary}`);
 }
