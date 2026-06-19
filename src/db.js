@@ -104,25 +104,15 @@ export async function getAllMessagesSince(env, sinceIso) {
   return results || [];
 }
 
-export async function getInsightsSince(env, sinceIso, filter = {}) {
-  const where = ["created_at >= ?"];
-  const params = [sinceIso];
-  if (filter.category) {
-    where.push("category = ?");
-    params.push(filter.category);
-  }
-  if (filter.project) {
-    where.push("project = ?");
-    params.push(filter.project);
-  }
-  if (filter.hasSchedule) {
-    where.push("schedule != ''");
-  }
+// insights 조회 (브리핑이 messages 대신/함께 읽음)
+export async function getInsightsSince(env, sinceIso, filter) {
+  let where = "created_at >= ?";
+  const binds = [sinceIso];
+  if (filter && filter.category) { where += " AND category = ?"; binds.push(filter.category); }
+  if (filter && filter.project)  { where += " AND project = ?";  binds.push(filter.project); }
+  if (filter && filter.hasSchedule) { where += " AND schedule != ''"; }
   const { results } = await env.DB.prepare(
-    `SELECT schedule, category, project, summary, people, sender, input_chars, read_chars, created_at
-     FROM insights
-     WHERE ${where.join(" AND ")}
-     ORDER BY created_at DESC LIMIT 100`
-  ).bind(...params).all();
+    "SELECT schedule, category, project, summary, people, created_at FROM insights WHERE " + where + " ORDER BY created_at DESC LIMIT 100"
+  ).bind(...binds).all();
   return results || [];
 }
