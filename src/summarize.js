@@ -3,7 +3,7 @@
 
 import { extractText } from "./docparse.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
-import { sendMessage, senderName } from "./telegram.js";
+import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 
 const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" +
@@ -22,7 +22,6 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
   // 1) extract text (1 Claude call inside docparse). store for reuse.
   const text = await extractText(env, msg);
   if (!text) return;
-  const readText = text.slice(0, 9000);
 
   try {
     await env.DB.prepare(
@@ -35,7 +34,7 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
   // 2) ONE combined call: classify + summary together
   let parsed = null;
   try {
-    const raw = await callClaude(env, "문서 내용:\n" + readText, COMBINED_SYSTEM, MODEL_SMART, 1500);
+    const raw = await callClaude(env, "문서 내용:\n" + text.slice(0, 9000), COMBINED_SYSTEM, MODEL_SMART, 1500);
     parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
   } catch (e) {
     console.error("summarize combined parse error", e && e.message);
@@ -46,8 +45,8 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
     const plain = String(parsed.summary_html || "").replace(/<\/?[a-zA-Z]+>/g, "").trim();
     try {
       await env.DB.prepare(
-        "INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, sender, input_chars, read_chars) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
       ).bind(
         String(msg.chat.id),
         "file",
@@ -56,10 +55,7 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
         String(parsed.category || ""),
         String(parsed.project || ""),
         plain.slice(0, 500),
-        String(parsed.people || ""),
-        senderName(msg),
-        text.length,
-        readText.length
+        String(parsed.people || "")
       ).run();
       console.log("insight saved:", parsed.category || parsed.project || "general", plain.slice(0, 30));
     } catch (e) {
@@ -77,17 +73,25 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
 }
 
 // /summary — summarize the most recently stored file for this chat (uses saved text, no re-extract).
-export async function summarizeLatest(env, chatId) {
+export async function summarizeLatest(env, chatId, keyword) {
   let row = null;
   try {
-    row = await env.DB.prepare(
-      "SELECT filename, text FROM files WHERE chat_id = ? AND text != '' ORDER BY id DESC LIMIT 1"
-    ).bind(String(chatId)).first();
+    if (keyword) {
+      const safe = keyword.replace(/[%_'"\\]/g, " ").trim().slice(0, 30);
+      row = await env.DB.prepare(
+        "SELECT filename, text FROM files WHERE chat_id = ? AND text != '' AND (filename LIKE ? OR text LIKE ?) ORDER BY id DESC LIMIT 1"
+      ).bind(String(chatId), "%" + safe + "%", "%" + safe + "%").first();
+    } else {
+      row = await env.DB.prepare(
+        "SELECT filename, text FROM files WHERE chat_id = ? AND text != '' ORDER BY id DESC LIMIT 1"
+      ).bind(String(chatId)).first();
+    }
   } catch (e) {
     console.error("summarizeLatest query error", e && e.message);
   }
   if (!row || !row.text) {
-    return sendMessage(env, chatId, "최근 저장된 자료가 없습니다. 파일을 먼저 보내주세요.");
+    if (keyword) return sendMessage(env, chatId, "'" + keyword + "' 관련 자료를 찾지 못했습니다. 해당 자료를 공유해 주시면 요약해 드리겠습니다.");
+    return sendMessage(env, chatId, "최근 저장된 자료가 없습니다. 자료를 먼저 보내주세요.");
   }
   const out = await callClaude(env, "문서 내용:\n" + row.text.slice(0, 9000),
     PERSONA_STYLE + "\n\n[작업] 문서를 염 사장 관점에서 1-2줄 핵심만 요약. 날짜·사람·안건 <b>굵게</b>.\n형식: 📋 <b>제목</b>\n\n📌 핵심\n• 1-2줄",

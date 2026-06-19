@@ -21,7 +21,7 @@ const CONTACT_SYSTEM = PERSONA_STYLE + "\n\n" +
   "📇 <b>면담 이력</b>\n\n" +
   "• <b>[날짜]</b> <u>이름(소속)</u> — 핵심";
 
-export async function runMorningBriefing(env) {
+export async function runMorningBriefing(env, replyChatId) {
   const chatIds = (env.BRIEFING_CHAT_ID || "").split(",").map((s) => s.trim()).filter(Boolean);
   if (!chatIds.length) return;
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -29,7 +29,7 @@ export async function runMorningBriefing(env) {
   if (!rows.length) return;
   const digest = rows.map((r) => `[${r.sender}] ${r.text}`).join("\n");
   const summary = await callClaude(env, "지난 하루 대화:\n" + digest, MORNING_SYSTEM, MODEL_SMART, 1500);
-  const target = env.BRIEFING_TARGET_ID || chatIds[0];
+  const target = replyChatId || env.BRIEFING_TARGET_ID || chatIds[0];
   await sendMessage(env, target, summary);
 }
 
