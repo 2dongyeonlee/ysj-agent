@@ -1,27 +1,25 @@
-// index.js — entry point. routing only. Bot stays silent unless explicitly called (/q, mention, commands).
+// index.js — entry point. routing only. Bot stays silent unless explicitly called.
 import { collectMessage } from "./collect.js";
-import { runMorningBriefing, runContactBriefing } from "./briefing.js";
-import { handleRetrieve } from "./retrieve.js";
-import { handleMeetingPrep } from "./prep.js";
+import { runMorningBriefing } from "./briefing.js";
 import { summarizeFile, summarizeLatest } from "./summarize.js";
 import { handleQA } from "./qa.js";
-import { handleSettings } from "./settings.js";
-import { runWeeklyReport, runHighLevelDraft } from "./report.js";
 import { runInfoBriefing } from "./info.js";
 import { runProjectBriefing } from "./project.js";
+import { runDecisionBriefing } from "./decision.js";
 import { handleVoice } from "./voice.js";
+import { classifyIntent } from "./intent.js";
 import { sendMessage } from "./telegram.js";
 
-const HELP = "📋 <b>명령어</b>\n" +
-  "/q [질문] — 질문에 답변\n" +
-  "/info — 대외정보 요약\n" +
-  "/project — 프로젝트 현황\n" +
-  "/brief — 아침 브리핑\n" +
-  "/summary — 방금 올린 자료 요약\n" +
-  "/contacts — 면담 이력\n" +
-  "/weekly — 주간 업무보고\n" +
-  "/report — 보고 초안\n\n" +
-  "메시지·파일·녹음은 조용히 저장·분류됩니다. 답변은 /q 또는 멘션 시에만.";
+const HELP =
+  "📋 <b>사용 안내</b>\n\n" +
+  "궁금한 건 그냥 말씀하시면 됩니다.\n" +
+  "• \"넥서스 어떻게 됐어?\" — 프로젝트 현황\n" +
+  "• \"오늘 의사결정 사항?\" — 결정 필요사항\n" +
+  "• \"대외동향 어때?\" — 대외 정보\n" +
+  "• \"자료 요약해줘\" — 받은 자료 요약\n" +
+  "• \"이번주 현안 브리핑\" — 현안 정리\n\n" +
+  "자료·녹음을 보내면 조용히 저장·분류됩니다.\n\n" +
+  "<i>명령어로도 가능: /info /project /decision /summary /brief</i>";
 
 export default {
   async fetch(request, env) {
@@ -40,8 +38,6 @@ export default {
     ctx.waitUntil((async function () {
       await runMorningBriefing(env);
       await runInfoBriefing(env, null, 1);
-      const kstDay = new Date(Date.now() + 9 * 3600000).getDay();
-      if (kstDay === 1) await runProjectBriefing(env, null, 7);
     })());
   },
 };
@@ -55,24 +51,22 @@ async function route(env, msg) {
   if (await env.STATE.get(key)) return;
   await env.STATE.put(key, "1", { expirationTtl: 60 });
 
-  // ---- explicit commands (ASCII only) ----
+  // ---- commands (ASCII only). arg = text after the command ----
   if (text === "/help" || text === "/start") return sendMessage(env, chatId, HELP);
-  if (text.startsWith("/set")) {
-    const reply = await handleSettings(env, text.replace("/set", "").trim());
-    return sendMessage(env, chatId, reply);
-  }
-  if (text === "/contacts") return runContactBriefing(env, chatId);
-  if (text.startsWith("/info")) {
-    const days = Number(text.replace("/info", "").trim()) || 1;
-    return runInfoBriefing(env, chatId, Math.max(1, Math.min(days, 30)));
-  }
-  if (text.startsWith("/project")) return runProjectBriefing(env, chatId, 7);
-  if (text.startsWith("/brief")) return runMorningBriefing(env);
-  if (text.startsWith("/weekly")) return runWeeklyReport(env, chatId, 7);
-  if (text.startsWith("/report")) return runHighLevelDraft(env, chatId, 14);
-  if (text.startsWith("/summary")) return summarizeLatest(env, chatId);
 
-  // /q [question] — the ONLY way to ask in 1:1 (and works in groups too)
+  if (text.startsWith("/brief")) {
+    return runMorningBriefing(env, chatId);
+  }
+  if (text.startsWith("/info")) return runInfoBriefing(env, chatId, 1);
+  if (text.startsWith("/decision")) return runDecisionBriefing(env, chatId, 14);
+  if (text.startsWith("/project")) {
+    const name = text.replace("/project", "").trim();
+    return runProjectBriefing(env, chatId, 7, name);
+  }
+  if (text.startsWith("/summary")) {
+    const kw = text.replace("/summary", "").trim();
+    return summarizeLatest(env, chatId, kw);
+  }
   if (text.startsWith("/q ") || text === "/q") {
     const q = text.replace(/^\/q\s*/, "").trim();
     if (!q) return sendMessage(env, chatId, "질문을 입력해 주세요. 예: /q 어제 회의 결정사항은?");
@@ -82,25 +76,39 @@ async function route(env, msg) {
   // ---- silent collection (no auto-reply) ----
   await collectMessage(env, msg);
 
-  // voice/audio: store + classify silently. Reply only when mentioned.
   if (msg.voice || msg.audio || (msg.document && /audio|ogg|mp3|m4a|wav/i.test((msg.document.mime_type || "")))) {
     const mentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
     await handleVoice(env, chatId, msg, mentioned);
     return;
   }
-
-  // file/image: store + classify silently. Reply only when mentioned.
   if (msg.document || (msg.photo && msg.photo.length)) {
     const mentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
     await summarizeFile(env, chatId, msg, mentioned);
     return;
   }
 
-  // text: answer ONLY when mentioned (groups). 1:1 plain text = silent (info delivery).
-  // To ask in 1:1, user must use /q.
+  // text: groups need mention; 1:1 uses natural-language intent classification.
   const isMentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
-  if (isMentioned) {
-    return handleQA(env, chatId, text.split("@" + botUsername).join("").trim());
+  const isDM = msg.chat.type === "private";
+
+  // Both 1:1 and group-mention go through the SAME natural-language routing,
+  // so answers are identical in quality. Group: only when mentioned. 1:1: always.
+  const cleanText = text.split("@" + botUsername).join("").trim();
+  if ((isDM && text) || isMentioned) {
+    // In groups a mention is an explicit call, so never stay silent there:
+    // if intent is unclear, fall back to a real Q&A answer instead of "none".
+    const { intent, target } = await classifyIntent(env, cleanText);
+    switch (intent) {
+      case "summary":  return summarizeLatest(env, chatId, target);
+      case "project":  return runProjectBriefing(env, chatId, 7, target);
+      case "decision": return runDecisionBriefing(env, chatId, 14);
+      case "info":     return runInfoBriefing(env, chatId, 1);
+      case "brief":    return runMorningBriefing(env, chatId);
+      case "question": return handleQA(env, chatId, cleanText);
+      default:
+        // mentioned => user explicitly addressed the bot, so answer anyway.
+        if (isMentioned) return handleQA(env, chatId, cleanText);
+        return; // 1:1 + none => silent (info delivery)
+    }
   }
-  // otherwise: silent (already collected above)
 }
