@@ -3,7 +3,7 @@ import { collectMessage } from "./collect.js";
 import { runMorningBriefing, runContactBriefing } from "./briefing.js";
 import { handleRetrieve } from "./retrieve.js";
 import { handleMeetingPrep } from "./prep.js";
-import { summarizeFile } from "./summarize.js";
+import { summarizeFile, summarizeLatest } from "./summarize.js";
 import { handleQA } from "./qa.js";
 import { handleSettings } from "./settings.js";
 import { runWeeklyReport, runHighLevelDraft } from "./report.js";
@@ -12,14 +12,21 @@ import { runProjectBriefing } from "./project.js";
 import { handleVoice } from "./voice.js";
 import { sendMessage } from "./telegram.js";
 
+const HELP = "📋 <b>명령어</b>\n" +
+  "/info — 대외정보 요약\n" +
+  "/contacts — 면담 이력\n" +
+  "/project — 프로젝트 현황\n" +
+  "/weekly — 주간 업무보고\n" +
+  "/report — 보고 초안\n" +
+  "/summary — 방금 올린 자료 요약\n\n" +
+  "파일·녹음을 보내면 조용히 저장·분류됩니다. 요약은 /summary 또는 멘션 시.";
+
 export default {
   async fetch(request, env) {
     if (request.method !== "POST") return new Response("ok");
     let update;
     try { update = await request.json(); } catch { return new Response("ok"); }
-
     if (update.my_chat_member) return new Response("ok");
-
     const msg = update.message;
     if (!msg) return new Response("ok");
     try { await route(env, msg); }
@@ -28,12 +35,11 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // morning: daily info briefing + contact briefing; weekly project on Monday
     ctx.waitUntil((async function () {
       await runMorningBriefing(env);
-      await runInfoBriefing(env, null, 1);            // daily external-affairs
+      await runInfoBriefing(env, null, 1);
       const kstDay = new Date(Date.now() + 9 * 3600000).getDay();
-      if (kstDay === 1) await runProjectBriefing(env, null, 7); // Monday weekly
+      if (kstDay === 1) await runProjectBriefing(env, null, 7);
     })());
   },
 };
@@ -46,34 +52,35 @@ async function route(env, msg) {
   if (await env.STATE.get(key)) return;
   await env.STATE.put(key, "1", { expirationTtl: 60 });
 
-  // commands (ASCII to avoid encoding issues)
+  // commands (ASCII only)
+  if (text === "/help" || text === "/start") return sendMessage(env, chatId, HELP);
   if (text.startsWith("/set")) {
     const reply = await handleSettings(env, text.replace("/set", "").trim());
     return sendMessage(env, chatId, reply);
-  }
-  if (text === "/help" || text === "/start") {
-    return sendMessage(env, chatId, "📋 명령어\n/info — 대외정보 요약 (무슨 이슈가 있나)\n/contacts — 면담 이력 (누구를 만났나)\n/project — 프로젝트 현황\n/weekly — 주간 업무보고\n/report — 보고 초안 (윗선 보고용)\n/set 시간 08:00 — 설정\n\n파일·녹음·자료를 보내면 자동으로 요약·분류됩니다.");
   }
   if (text === "/contacts") return runContactBriefing(env, chatId);
   if (text.startsWith("/info")) return runInfoBriefing(env, chatId, 1);
   if (text.startsWith("/project")) return runProjectBriefing(env, chatId, 7);
   if (text.startsWith("/weekly")) return runWeeklyReport(env, chatId, 7);
   if (text.startsWith("/report")) return runHighLevelDraft(env, chatId, 14);
+  if (text.startsWith("/summary")) return summarizeLatest(env, chatId);
 
-  // collect every message/file silently
+  // collect every message/file silently (saves + classifies, NO reply)
   await collectMessage(env, msg);
 
-  // voice/audio: transcribe -> summarize (always reply in DM, or when mentioned)
+  // voice/audio: store + classify silently. Summary only on /summary or mention.
   if (msg.voice || msg.audio || (msg.document && /audio|ogg|mp3|m4a|wav/i.test((msg.document.mime_type || "")))) {
-    return handleVoice(env, chatId, msg);
+    const botUsername = env.BOT_USERNAME || "";
+    const mentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
+    await handleVoice(env, chatId, msg, mentioned); // reply only if mentioned
+    return;
   }
 
-  // file/image: summarize replies when targeted
+  // file/image: store + classify silently. Reply only when mentioned.
   if (msg.document || (msg.photo && msg.photo.length)) {
     const botUsername = env.BOT_USERNAME || "";
-    const isDM = msg.chat.type === "private";
-    const replyToUser = isDM || (botUsername && text.indexOf("@" + botUsername) !== -1);
-    await summarizeFile(env, chatId, msg, replyToUser);
+    const mentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
+    await summarizeFile(env, chatId, msg, mentioned); // reply only if mentioned
     return;
   }
 

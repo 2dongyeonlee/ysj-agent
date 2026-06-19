@@ -42,13 +42,13 @@ const VOICE_SYSTEM = PERSONA_STYLE + "\n\n" +
   "💡 의사결정·후속\n• {판단/후속 필요사항}\n\n" +
   "🗒 전문\n{받아쓰기 원문 앞부분}";
 
-export async function handleVoice(env, chatId, msg) {
+export async function handleVoice(env, chatId, msg, replyToUser = false) {
   const voice = msg.voice || msg.audio || (msg.document && /audio|ogg|mp3|m4a|wav/i.test(msg.document.mime_type || "") ? msg.document : null);
   if (!voice) return;
   if (voice.file_size && voice.file_size > 25 * 1024 * 1024) {
     return sendMessage(env, chatId, "녹음 파일이 너무 큽니다 (25MB 초과). 잘라서 보내주세요.");
   }
-  await sendMessage(env, chatId, "🎙 녹음을 받아쓰는 중입니다...");
+  if (replyToUser) await sendMessage(env, chatId, "🎙 녹음을 받아쓰는 중입니다...");
   let transcript;
   try {
     const url = await getFileUrl(env, voice.file_id);
@@ -59,12 +59,6 @@ export async function handleVoice(env, chatId, msg) {
     return sendMessage(env, chatId, "받아쓰기에 실패했습니다. 다시 시도해 주세요.");
   }
   if (!transcript) return sendMessage(env, chatId, "음성에서 텍스트를 추출하지 못했습니다.");
-  await extractInsight(env, {
-    chatId: msg.chat.id,
-    sourceType: "voice",
-    sourceRef: voice.file_id,
-    text: transcript,
-  });
   try {
     await env.DB.prepare(
       "INSERT INTO files (chat_id, file_id, filename, text) VALUES (?, ?, ?, ?)"
@@ -72,6 +66,14 @@ export async function handleVoice(env, chatId, msg) {
   } catch (e) {
     console.error("voice save error", e && e.message);
   }
+  await extractInsight(env, {
+    chatId: msg.chat.id,
+    sourceType: "voice",
+    sourceRef: voice.file_id,
+    text: transcript,
+  });
+
+  if (!replyToUser) return; // silent store only
   const summary = await callClaude(env, "받아쓴 내용:\n" + transcript.slice(0, 8000), VOICE_SYSTEM, MODEL_SMART, 2000);
   await sendMessage(env, chatId, summary);
 }
