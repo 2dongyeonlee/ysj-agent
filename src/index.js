@@ -1,4 +1,4 @@
-// index.js — entry point. routing only (keep thin). logic lives in each module.
+// index.js — entry point. routing only. Bot stays silent unless explicitly called (/q, mention, commands).
 import { collectMessage } from "./collect.js";
 import { runMorningBriefing, runContactBriefing } from "./briefing.js";
 import { handleRetrieve } from "./retrieve.js";
@@ -13,13 +13,15 @@ import { handleVoice } from "./voice.js";
 import { sendMessage } from "./telegram.js";
 
 const HELP = "📋 <b>명령어</b>\n" +
+  "/q [질문] — 질문에 답변\n" +
   "/info — 대외정보 요약\n" +
-  "/contacts — 면담 이력\n" +
   "/project — 프로젝트 현황\n" +
+  "/brief — 아침 브리핑\n" +
+  "/summary — 방금 올린 자료 요약\n" +
+  "/contacts — 면담 이력\n" +
   "/weekly — 주간 업무보고\n" +
-  "/report — 보고 초안\n" +
-  "/summary — 방금 올린 자료 요약\n\n" +
-  "파일·녹음을 보내면 조용히 저장·분류됩니다. 요약은 /summary 또는 멘션 시.";
+  "/report — 보고 초안\n\n" +
+  "메시지·파일·녹음은 조용히 저장·분류됩니다. 답변은 /q 또는 멘션 시에만.";
 
 export default {
   async fetch(request, env) {
@@ -47,12 +49,13 @@ export default {
 async function route(env, msg) {
   const chatId = msg.chat.id;
   const text = (msg.text || msg.caption || "").trim();
+  const botUsername = env.BOT_USERNAME || "";
 
   const key = "msg:" + chatId + ":" + msg.message_id;
   if (await env.STATE.get(key)) return;
   await env.STATE.put(key, "1", { expirationTtl: 60 });
 
-  // commands (ASCII only)
+  // ---- explicit commands (ASCII only) ----
   if (text === "/help" || text === "/start") return sendMessage(env, chatId, HELP);
   if (text.startsWith("/set")) {
     const reply = await handleSettings(env, text.replace("/set", "").trim());
@@ -61,34 +64,40 @@ async function route(env, msg) {
   if (text === "/contacts") return runContactBriefing(env, chatId);
   if (text.startsWith("/info")) return runInfoBriefing(env, chatId, 1);
   if (text.startsWith("/project")) return runProjectBriefing(env, chatId, 7);
+  if (text.startsWith("/brief")) return runMorningBriefing(env);
   if (text.startsWith("/weekly")) return runWeeklyReport(env, chatId, 7);
   if (text.startsWith("/report")) return runHighLevelDraft(env, chatId, 14);
   if (text.startsWith("/summary")) return summarizeLatest(env, chatId);
 
-  // collect every message/file silently (saves + classifies, NO reply)
+  // /q [question] — the ONLY way to ask in 1:1 (and works in groups too)
+  if (text.startsWith("/q ") || text === "/q") {
+    const q = text.replace(/^\/q\s*/, "").trim();
+    if (!q) return sendMessage(env, chatId, "질문을 입력해 주세요. 예: /q 어제 회의 결정사항은?");
+    return handleQA(env, chatId, q);
+  }
+
+  // ---- silent collection (no auto-reply) ----
   await collectMessage(env, msg);
 
-  // voice/audio: store + classify silently. Summary only on /summary or mention.
+  // voice/audio: store + classify silently. Reply only when mentioned.
   if (msg.voice || msg.audio || (msg.document && /audio|ogg|mp3|m4a|wav/i.test((msg.document.mime_type || "")))) {
-    const botUsername = env.BOT_USERNAME || "";
     const mentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
-    await handleVoice(env, chatId, msg, mentioned); // reply only if mentioned
+    await handleVoice(env, chatId, msg, mentioned);
     return;
   }
 
   // file/image: store + classify silently. Reply only when mentioned.
   if (msg.document || (msg.photo && msg.photo.length)) {
-    const botUsername = env.BOT_USERNAME || "";
     const mentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
-    await summarizeFile(env, chatId, msg, mentioned); // reply only if mentioned
+    await summarizeFile(env, chatId, msg, mentioned);
     return;
   }
 
-  // general QA: DM always; group only when mentioned
-  const botUsername = env.BOT_USERNAME || "";
-  const isDM = msg.chat.type === "private";
+  // text: answer ONLY when mentioned (groups). 1:1 plain text = silent (info delivery).
+  // To ask in 1:1, user must use /q.
   const isMentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
-  if (isDM || isMentioned) {
+  if (isMentioned) {
     return handleQA(env, chatId, text.split("@" + botUsername).join("").trim());
   }
+  // otherwise: silent (already collected above)
 }
