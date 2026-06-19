@@ -2,7 +2,7 @@
 // STT provider isolated in transcribe() for later swap (e.g. CLOVA).
 
 import { callClaude, MODEL_SMART } from "./claude.js";
-import { sendMessage } from "./telegram.js";
+import { sendMessage, senderName } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 import { extractInsight } from "./insight.js";
 
@@ -71,6 +71,7 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
     sourceType: "voice",
     sourceRef: voice.file_id,
     text: transcript,
+    sender: senderName(msg),
   });
 
   if (!replyToUser) return; // silent store only

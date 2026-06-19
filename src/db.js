@@ -119,7 +119,7 @@ export async function getInsightsSince(env, sinceIso, filter = {}) {
     where.push("schedule != ''");
   }
   const { results } = await env.DB.prepare(
-    `SELECT schedule, category, project, summary, people, created_at
+    `SELECT schedule, category, project, summary, people, sender, input_chars, read_chars, created_at
      FROM insights
      WHERE ${where.join(" AND ")}
      ORDER BY created_at DESC LIMIT 100`

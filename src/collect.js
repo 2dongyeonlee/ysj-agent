@@ -8,6 +8,7 @@ const INSIGHT_SIGNAL = /보고|일정|회의|미팅|면담|결정|승인|검토|
 
 export async function collectMessage(env, msg) {
   const text = (msg.text || msg.caption || "").trim();
+  const sender = senderName(msg);
 
   // file metadata (search source). file_id now, R2 later.
   if (msg.document) {
@@ -23,7 +24,7 @@ export async function collectMessage(env, msg) {
     await saveMessage(env, {
       chat_id: msg.chat.id,
       message_id: msg.message_id,
-      sender: senderName(msg),
+      sender,
       text: text,
     });
     // auto-extract "who was met" into engagements (cheap keyword filter inside)
@@ -34,6 +35,7 @@ export async function collectMessage(env, msg) {
         sourceType: "message",
         sourceRef: String(msg.message_id),
         text,
+        sender,
       });
     }
   }

@@ -24,14 +24,15 @@ function cleanJson(raw) {
     .trim();
 }
 
-export async function extractInsight(env, { chatId, sourceType, sourceRef, text }) {
+export async function extractInsight(env, { chatId, sourceType, sourceRef, text, sender }) {
   try {
     const body = String(text || "").trim();
     if (body.length < 10) return null;
+    const readText = body.slice(0, 4000);
 
     const raw = await callClaude(
       env,
-      "내용:\n" + body.slice(0, 4000),
+      "내용:\n" + readText,
       EXTRACT_SYSTEM,
       MODEL_FAST,
       500
@@ -58,8 +59,8 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text 
     }
 
     await env.DB.prepare(
-      `INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, sender, input_chars, read_chars)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       String(chatId),
       sourceType || "",
@@ -68,7 +69,10 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text 
       insight.category,
       insight.project,
       insight.summary,
-      insight.people
+      insight.people,
+      sender || "",
+      body.length,
+      readText.length
     ).run();
 
     console.log("insight saved:", insight.category || insight.project || "general", insight.summary.slice(0, 30));

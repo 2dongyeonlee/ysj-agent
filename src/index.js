@@ -62,7 +62,10 @@ async function route(env, msg) {
     return sendMessage(env, chatId, reply);
   }
   if (text === "/contacts") return runContactBriefing(env, chatId);
-  if (text.startsWith("/info")) return runInfoBriefing(env, chatId, 1);
+  if (text.startsWith("/info")) {
+    const days = Number(text.replace("/info", "").trim()) || 1;
+    return runInfoBriefing(env, chatId, Math.max(1, Math.min(days, 30)));
+  }
   if (text.startsWith("/project")) return runProjectBriefing(env, chatId, 7);
   if (text.startsWith("/brief")) return runMorningBriefing(env);
   if (text.startsWith("/weekly")) return runWeeklyReport(env, chatId, 7);

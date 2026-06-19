@@ -3,7 +3,7 @@
 
 import { extractText } from "./docparse.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
-import { sendMessage } from "./telegram.js";
+import { sendMessage, senderName } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 
 const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" +
@@ -22,6 +22,7 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
   // 1) extract text (1 Claude call inside docparse). store for reuse.
   const text = await extractText(env, msg);
   if (!text) return;
+  const readText = text.slice(0, 9000);
 
   try {
     await env.DB.prepare(
@@ -34,7 +35,7 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
   // 2) ONE combined call: classify + summary together
   let parsed = null;
   try {
-    const raw = await callClaude(env, "문서 내용:\n" + text.slice(0, 9000), COMBINED_SYSTEM, MODEL_SMART, 1500);
+    const raw = await callClaude(env, "문서 내용:\n" + readText, COMBINED_SYSTEM, MODEL_SMART, 1500);
     parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
   } catch (e) {
     console.error("summarize combined parse error", e && e.message);
@@ -45,8 +46,8 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
     const plain = String(parsed.summary_html || "").replace(/<\/?[a-zA-Z]+>/g, "").trim();
     try {
       await env.DB.prepare(
-        "INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, sender, input_chars, read_chars) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
       ).bind(
         String(msg.chat.id),
         "file",
@@ -55,7 +56,10 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
         String(parsed.category || ""),
         String(parsed.project || ""),
         plain.slice(0, 500),
-        String(parsed.people || "")
+        String(parsed.people || ""),
+        senderName(msg),
+        text.length,
+        readText.length
       ).run();
       console.log("insight saved:", parsed.category || parsed.project || "general", plain.slice(0, 30));
     } catch (e) {
