@@ -19,7 +19,7 @@ function sinceDaysIso(days) {
 
 export async function runProjectBriefing(env, chatId, days, name) {
   const rows = await getInsightsSince(env, sinceDaysIso(days || 7), {});
-  let proj = (rows || []).filter(function (r) { return r.project; });
+  let proj = (rows || []).filter(function (r) { return r.project && r.project !== "기타"; });
   if (name) proj = proj.filter(function (r) { return (r.project || '').toLowerCase().indexOf(name.toLowerCase()) !== -1; });
   if (!proj.length) {
     if (chatId) await sendMessage(env, chatId, "최근 정리할 프로젝트 현황이 없습니다.");
