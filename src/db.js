@@ -130,6 +130,7 @@ export async function getInfoInsightsSince(env, sinceIso, categories) {
   const { results } = await env.DB.prepare(
     "SELECT source_type, schedule, category, project, summary, people, author, report_date, sender, created_at, source_ref " +
     "FROM insights WHERE created_at >= ? AND category IN (" + ph + ") AND (project = '' OR project IS NULL) " +
+    "AND id IN (SELECT MAX(id) FROM insights GROUP BY COALESCE(NULLIF(source_ref,''), CAST(id AS TEXT))) " +
     "ORDER BY created_at DESC LIMIT 100"
   ).bind(sinceIso, ...list).all();
   return results || [];

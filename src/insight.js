@@ -29,7 +29,7 @@ decision·followup 컬럼은 사용하지 않는다. 결정사항은 summary에 
   "category": "정부, 국회, BH, 글로벌, 언론 중 하나. kind가 info가 아니면 빈 문자열",
   "project": "프로젝트명. nexus/넥서스는 nexus. kind가 project가 아니면 빈 문자열",
   "schedule": "날짜+안건. 없으면 빈 문자열",
-  "summary": "핵심 1~2줄",
+  "summary": "30자 이내 핵심 1줄. 불릿(•)·이모지·📋·📌·제목 형식 금지. 완성된 짧은 서술문으로.",
   "people": "관련 인물/소속. 없으면 빈 문자열"
 }`;
 
