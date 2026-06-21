@@ -8,7 +8,7 @@ import { PERSONA_STYLE } from "./persona.js";
 const SEPARATOR = "━━━━━━━━━";
 const INFO_CATEGORIES = ["정부", "국회", "BH", "글로벌", "언론"];
 const INTERNAL_PERSON_RE = /염성진|윤풍영|SK그룹 의장|커뮤니케이션위원장|SK그룹|SKHY|SKALA|Hy-Five|담당 사장|TF 총괄|Steering Committee|협의회|CR팀장|미래전략/;
-const EXTERNAL_AFFIL_RE = /장관|차관|고용노동부|산업통상자원부|산업부|정부|국회|의원|BH|대통령|총리|엔비디아|CEO|해외|글로벌/;
+const EXTERNAL_AFFIL_RE = /장관|차관|고용노동부|산업통상자원부|산업부|과기부|정부|국회|의원|BH|대통령|총리|엔비디아|CEO|해외|글로벌/;
 
 const MORNING_SYSTEM = PERSONA_STYLE + "\n\n" +
   "[작업] 지난 하루 대화를 읽고 사장님이 출근길 30초에 파악하도록 정리. 각 항목 1줄.\n" +
@@ -78,16 +78,18 @@ function sortByImminence(a, b) {
   return Math.abs(issueScore(a) - today) - Math.abs(issueScore(b) - today);
 }
 
+function textOf(row) {
+  return String(row.schedule || "") + " " + String(row.summary || "") + " " + String(row.people || "");
+}
+
 function isOI(row) {
-  const text = String(row.schedule || "") + " " + String(row.summary || "");
-  return /O\/I|커뮤니케이션총괄 O\/I|사내 보고|운영계획|추진 현황 보고/.test(text);
+  return /O\/I|커뮤니케이션총괄 O\/I|사내 보고|운영계획|추진 현황 보고|TF 보고/.test(textOf(row));
 }
 
 function isMeetingRow(row) {
   if (!INFO_CATEGORIES.includes(row.category)) return false;
   if (isOI(row)) return false;
-  const text = String(row.schedule || "") + " " + String(row.summary || "");
-  if (!/면담|간담회|환담/.test(text)) return false;
+  if (!/면담|간담회|환담/.test(textOf(row))) return false;
   return externalPeople(row).length > 0;
 }
 
@@ -108,8 +110,17 @@ function externalPeople(row) {
 
 function isDecisionRow(row) {
   if (isOI(row)) return false;
-  const text = String(row.schedule || "") + " " + String(row.summary || "");
-  return /보고요망|확정|결정|승인|낙점|출범|오픈 예정|예정|확인 필요/.test(text);
+  return /보고요망|확정|결정|승인|낙점|출범|오픈 예정|예정|확인 필요/.test(textOf(row));
+}
+
+function isReportRow(row) {
+  const text = textOf(row);
+  if (isOI(row)) return true;
+  return /발표|보고|준비|토킹포인트|연설|간담회|행사/.test(text) && /사장|염성진|의장|위원장|운영계획|토킹포인트|발표|연설/.test(text);
+}
+
+function reportTag(row) {
+  return isOI(row) ? "[사내]" : "[외부]";
 }
 
 function reportTitle(row) {
@@ -152,7 +163,7 @@ export async function runBrief(env, chatId) {
 
   const decisions = useful.filter(isDecisionRow).slice(0, 5);
   const meetings = useful.filter(isMeetingRow).slice(0, 5);
-  const reports = useful.filter(isOI).slice(0, 5);
+  const reports = useful.filter(isReportRow).slice(0, 5);
 
   const lines = ["🗞 브리핑 · " + todayText(), SEPARATOR];
   lines.push("🚨 결정·확인 필요");
@@ -174,9 +185,9 @@ export async function runBrief(env, chatId) {
 
   lines.push("📋 보고 건");
   if (reports.length) {
-    for (const row of reports) lines.push("• " + reportTitle(row) + " (" + issueDate(row) + ")");
+    for (const row of reports) lines.push("• " + reportTag(row) + " " + reportTitle(row) + " (" + issueDate(row) + ")");
   } else {
-    lines.push("• 임박한 사내 보고 건 없음");
+    lines.push("• 임박한 보고 건 없음");
   }
   lines.push(SEPARATOR);
 
