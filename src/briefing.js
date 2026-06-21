@@ -185,7 +185,7 @@ export async function runBrief(env, chatId) {
   // 프로젝트 (project 있는 것) — 결정·보고 건 소스
   const projRows = (await getInsightsSince(env, sinceDaysIso(14), { projectNotEmpty: true })) || [];
   // O/I 등 내부보고 (category 비움, project 비움)
-  const internalRows = (await getInsightsSince(env, sinceDaysIso(14), { projectEmpty: true })) || []
+  const internalRows = ((await getInsightsSince(env, sinceDaysIso(14), { projectEmpty: true })) || [])
     .filter(function(r) { return !r.category || !INFO_CATS.includes(r.category); });
 
   const allRows = [...infoRows, ...projRows, ...internalRows]
