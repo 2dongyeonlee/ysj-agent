@@ -5,7 +5,7 @@ import { extractText } from "./docparse.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
-import { loadProjectKeywords, matchProjects, detectFollowup, detectDone, detectUrgent, normalizeCategory, normalizeDecision, normalizeSource } from "./insight.js";
+import { loadProjectKeywords, matchProjects, detectFollowup, detectDone, detectUrgent, normalizeCategory, normalizeDecision, normalizeSource, parseInfoMeta } from "./insight.js";
 import { updateInsightDone } from "./db.js";
 
 // project 는 LLM 자유판단이 아니라 키워드 매칭으로 결정하므로 스키마에서 제외.
@@ -21,7 +21,7 @@ const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" +
   "스키마:\n" +
   "{\n" +
   '  "schedule": "날짜+안건 (예: 6/20 회장 보고), 없으면 \\"\\"",\n' +
-  '  "category": "정책, 국회, BH, 글로벌, 언론PR 중 정확히 하나 또는 \\"\\"",\n' +
+  '  "category": "국회, 정부, BH, 글로벌, 언론 중 정확히 하나 또는 \\"\\"",\n' +
   '  "people": "관련 인물/소속, 없으면 \\"\\"",\n' +
   '  "decision": "문서에서 확정/결정/승인된 사항. 예정/검토중/논의/토의용은 제외. 명시 없으면 \\"\\"",\n' +
   '  "source": "결정 근거 출처가 문서에 명시돼 있으면 그대로 작성(예: 5/30 전략위 보고). 없으면 \\"\\"",\n' +
@@ -59,6 +59,8 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
     const caption = (msg.caption || "").trim();
     const filename = (msg.document && msg.document.file_name) || "";
     const matchText = caption + " " + filename + " " + text;
+    const sender = msg.from ? [msg.from.first_name, msg.from.last_name].filter(Boolean).join(" ") : "";
+    const meta = parseInfoMeta(caption + "\n" + text, sender, msg.date ? new Date(msg.date * 1000) : new Date());
 
     let projects = [];
     const keywords = await loadProjectKeywords(env);
@@ -94,6 +96,32 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
         ).run();
       } catch (e) {
         console.error("insight insert error", e && e.message);
+      }
+    }
+    if (category) {
+      try {
+        await env.DB.prepare(
+          "INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, sender, input_chars, read_chars, decision, source, author, report_date) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        ).bind(
+          String(msg.chat.id),
+          "info",
+          (msg.document && msg.document.file_id) || "",
+          String(parsed.schedule || ""),
+          category,
+          "",
+          summary,
+          String(parsed.people || ""),
+          sender,
+          text.length,
+          Math.min(text.length, 9000),
+          decision || null,
+          source || null,
+          meta.author,
+          meta.reportDate
+        ).run();
+      } catch (e) {
+        console.error("info insight insert error", e && e.message);
       }
     }
     console.log("insight saved:", (projects.join(",") || category || "general"), plain.slice(0, 30));
