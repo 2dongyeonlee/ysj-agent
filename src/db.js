@@ -43,8 +43,8 @@ export async function searchFiles(env, keyword) {
 // ===== 접촉이력 (기능3·4: 누구 만났는지) =====
 export async function findContact(env, name) {
   const { results } = await env.DB.prepare(
-    `SELECT * FROM contacts WHERE name LIKE ? OR aliases LIKE ? LIMIT 5`
-  ).bind(`%${name}%`, `%${name}%`).all();
+    `SELECT * FROM contacts WHERE name = ? OR aliases = ? LIMIT 5`
+  ).bind(String(name || "").trim(), String(name || "").trim()).all();
   return results || [];
 }
 
