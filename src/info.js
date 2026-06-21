@@ -61,7 +61,7 @@ function issueDate(row) {
 
 function issueStamp(row) {
   const date = issueDate(row);
-  const raw = String(row.sender || row.author || "").trim();
+  const raw = String(row.sender || "").trim();
   const sender = raw ? raw.split(/\s+/)[0] : "—";
   return date + "·<b>" + sender + "</b>";
 }
