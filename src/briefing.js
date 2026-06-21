@@ -6,23 +6,9 @@ import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 
 const SEPARATOR = "━━━━━━━━━";
-
-const BRIEF_SYSTEM = PERSONA_STYLE + "\n\n" + `summary 전체를 종합해 아래 양식만 채워라.
-decision/followup 컬럼은 사용하지 않는다.
-미결·결정·확인은 summary 본문에 명시된 것만 쓴다. 추론 금지.
-각 항목은 핵심 1줄만 쓴다. summary 원문을 통째로 붙이지 않는다.
-최근 만남은 사람 이름과 소속이 명시된 항목만 쓴다.
-프로젝트 내용은 자세히 풀지 말고 안내 줄만 유지한다.
-
-출력 양식:
-🗞 브리핑 · {오늘}
-━━━━━━━━━
-🚨 결정·확인 필요
-• [{사안일}] {항목}
-🤝 최근 만남 · 상세 /info
-• <b>{사람}</b> {소속} ({사안일})
-📂 프로젝트 현황 → /project
-━━━━━━━━━`;
+const INFO_CATEGORIES = ["정부", "국회", "BH", "글로벌", "언론"];
+const INTERNAL_PERSON_RE = /염성진|윤풍영|SK그룹 의장|커뮤니케이션위원장|SK그룹|SKHY|SKALA|Hy-Five|담당 사장|TF 총괄|Steering Committee|협의회|CR팀장|미래전략/;
+const EXTERNAL_AFFIL_RE = /장관|차관|고용노동부|산업통상자원부|산업부|정부|국회|의원|BH|대통령|총리|엔비디아|CEO|해외|글로벌/;
 
 const MORNING_SYSTEM = PERSONA_STYLE + "\n\n" +
   "[작업] 지난 하루 대화를 읽고 사장님이 출근길 30초에 파악하도록 정리. 각 항목 1줄.\n" +
@@ -53,7 +39,7 @@ function stripHtml(text) {
   return String(text || "").replace(/<\/?[a-zA-Z]+>/g, "").replace(/\s+/g, " ").trim();
 }
 
-function firstSentence(text) {
+function oneLine(text, max = 70) {
   const cleaned = stripHtml(text)
     .replace(/^📋\s*[^📌\n]+/u, "")
     .replace(/^📄\s*[^🎯\n]+/u, "")
@@ -64,11 +50,13 @@ function firstSentence(text) {
   const bullet = cleaned.match(/(?:^|\s)•\s*([^•\n]+)/);
   const source = bullet ? bullet[1].trim() : cleaned;
   const sentence = source.split(/(?<=[.!?。]|다\.|임\.|음\.)\s+/u)[0] || source;
-  return sentence.length > 70 ? sentence.slice(0, 70).trim() + "…" : sentence;
+  return sentence.length > max ? sentence.slice(0, max).trim() + "…" : sentence;
 }
 
 function issueDate(row) {
   const source = String(row.schedule || "") + "\n" + String(row.summary || "");
+  const iso = source.match(/20\d{2}[-.년]\s*(\d{1,2})[-.월]\s*(\d{1,2})/);
+  if (iso) return Number(iso[1]) + "/" + Number(iso[2]);
   const slash = source.match(/(\d{1,2})\/(\d{1,2})/);
   if (slash) return Number(slash[1]) + "/" + Number(slash[2]);
   const dotted = source.match(/(\d{1,2})\.(\d{1,2})/);
@@ -79,10 +67,55 @@ function issueDate(row) {
   return (d.getMonth() + 1) + "/" + d.getDate();
 }
 
-function sortByIssueDate(a, b) {
-  const [am, ad] = issueDate(a).split("/").map(Number);
-  const [bm, bd] = issueDate(b).split("/").map(Number);
-  return (am * 100 + ad) - (bm * 100 + bd);
+function issueScore(row) {
+  const [m, d] = issueDate(row).split("/").map(Number);
+  return m * 100 + d;
+}
+
+function sortByImminence(a, b) {
+  const now = new Date();
+  const today = (now.getMonth() + 1) * 100 + now.getDate();
+  return Math.abs(issueScore(a) - today) - Math.abs(issueScore(b) - today);
+}
+
+function isOI(row) {
+  const text = String(row.schedule || "") + " " + String(row.summary || "");
+  return /O\/I|커뮤니케이션총괄 O\/I|사내 보고|운영계획|추진 현황 보고/.test(text);
+}
+
+function isMeetingRow(row) {
+  if (!INFO_CATEGORIES.includes(row.category)) return false;
+  if (isOI(row)) return false;
+  const text = String(row.schedule || "") + " " + String(row.summary || "");
+  if (!/면담|간담회|환담/.test(text)) return false;
+  return externalPeople(row).length > 0;
+}
+
+function externalPeople(row) {
+  const chunks = String(row.people || "")
+    .split(/[,/·\n]+/)
+    .map(function (s) { return s.trim(); })
+    .filter(Boolean);
+  const out = [];
+  for (const chunk of chunks) {
+    if (INTERNAL_PERSON_RE.test(chunk)) continue;
+    if (!EXTERNAL_AFFIL_RE.test(chunk)) continue;
+    const name = (chunk.match(/^([가-힣A-Za-z]+(?:\s+[A-Za-z]+)?)/) || [null, chunk])[1];
+    if (name && out.indexOf(chunk) === -1) out.push(chunk);
+  }
+  return out;
+}
+
+function isDecisionRow(row) {
+  if (isOI(row)) return false;
+  const text = String(row.schedule || "") + " " + String(row.summary || "");
+  return /보고요망|확정|결정|승인|낙점|출범|오픈 예정|예정|확인 필요/.test(text);
+}
+
+function reportTitle(row) {
+  const text = stripHtml(row.summary);
+  const title = text.match(/📋\s*([^\n]+)/) || text.match(/([^.\n]*O\/I[^.\n]*)/);
+  return title ? title[1].trim() : oneLine(row.summary, 60);
 }
 
 async function sendLongMessage(env, chatId, text) {
@@ -114,25 +147,40 @@ export async function runMorningBriefing(env, replyChatId) {
 
 export async function runBrief(env, chatId) {
   const rows = await getInsightsSince(env, sinceDaysIso(14), {});
-  const useful = (rows || []).filter(function (r) { return r.summary; }).sort(sortByIssueDate);
+  const useful = (rows || []).filter(function (r) { return r.summary; }).sort(sortByImminence);
   if (!useful.length) return sendMessage(env, chatId, "현재 정리된 현안이 없습니다.");
 
-  const digest = useful.map(function (r) {
-    return "[" + issueDate(r) + "] " +
-      (r.project ? "프로젝트:" + r.project + " " : "") +
-      (r.category ? "대외정보:" + r.category + " " : "") +
-      firstSentence(r.summary) +
-      (r.people ? " / 인물:" + r.people : "");
-  }).join("\n");
+  const decisions = useful.filter(isDecisionRow).slice(0, 5);
+  const meetings = useful.filter(isMeetingRow).slice(0, 5);
+  const reports = useful.filter(isOI).slice(0, 5);
 
-  const out = await callClaude(
-    env,
-    "오늘: " + todayText() + "\n구분선: " + SEPARATOR + "\n\nsummary 목록:\n" + digest,
-    BRIEF_SYSTEM,
-    MODEL_SMART,
-    1800
-  );
-  await sendLongMessage(env, chatId, out);
+  const lines = ["🗞 브리핑 · " + todayText(), SEPARATOR];
+  lines.push("🚨 결정·확인 필요");
+  if (decisions.length) {
+    for (const row of decisions) lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary));
+  } else {
+    lines.push("• 임박한 결정·확인 필요 건 없음");
+  }
+
+  lines.push("🤝 만남 (외부)");
+  if (meetings.length) {
+    for (const row of meetings) {
+      const people = externalPeople(row).map(function (p) { return "<b>" + p + "</b>"; }).join(" · ");
+      lines.push("• " + people + " (" + issueDate(row) + ")");
+    }
+  } else {
+    lines.push("• 임박한 외부 만남 없음");
+  }
+
+  lines.push("📋 보고 건");
+  if (reports.length) {
+    for (const row of reports) lines.push("• " + reportTitle(row) + " (" + issueDate(row) + ")");
+  } else {
+    lines.push("• 임박한 사내 보고 건 없음");
+  }
+  lines.push(SEPARATOR);
+
+  await sendLongMessage(env, chatId, lines.join("\n"));
 }
 
 export async function runContactBriefing(env, chatId, days = 7) {
