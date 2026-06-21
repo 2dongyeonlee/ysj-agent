@@ -147,7 +147,7 @@ function reportTag(row) {
 
 function reportTitle(row) {
   const text = stripHtml(row.summary);
-  const title = text.match(/📋\s*([^\n]+)/) || text.match(/([^.\n]*O\/I[^.\n]*)/);
+  const title = text.match(/📋\s*([^📌🎯\n]+)/) || text.match(/([^.\n]*O\/I[^.\n]*)/);
   return title ? title[1].trim() : oneLine(row.summary, 60);
 }
 
@@ -187,29 +187,39 @@ export async function runBrief(env, chatId) {
   const meetings = useful.filter(isMeetingRow).slice(0, 5);
   const reports = useful.filter(isReportRow).slice(0, 5);
 
-  const lines = ["🗞 브리핑 · " + todayText(), SEPARATOR];
-  lines.push("🚨 결정·확인 필요");
+  const lines = ["🗞 브리핑 · " + todayText(), SEPARATOR, ""];
+  lines.push("🚨 <b>결정·확인 필요</b>");
   if (decisions.length) {
-    for (const row of decisions) lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary));
+    for (const row of decisions) {
+      lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary));
+      lines.push("");
+    }
   } else {
     lines.push("• 임박한 결정·확인 필요 건 없음");
+    lines.push("");
   }
 
-  lines.push("🤝 만남 (외부)");
+  lines.push("🤝 <b>만남 (외부)</b>");
   if (meetings.length) {
     for (const row of meetings) {
       const people = externalPeople(row).map(function (p) { return "<b>" + p + "</b>"; }).join(" · ");
       lines.push("• " + people + " (" + issueDate(row) + ")");
+      lines.push("");
     }
   } else {
     lines.push("• 임박한 외부 만남 없음");
+    lines.push("");
   }
 
-  lines.push("📋 보고 건");
+  lines.push("📋 <b>보고 건</b>");
   if (reports.length) {
-    for (const row of reports) lines.push("• " + reportTag(row) + " " + reportTitle(row) + " (" + issueDate(row) + ")");
+    for (const row of reports) {
+      lines.push("• <b>" + reportTag(row) + "</b> " + reportTitle(row) + " (" + issueDate(row) + ")");
+      lines.push("");
+    }
   } else {
     lines.push("• 임박한 보고 건 없음");
+    lines.push("");
   }
   lines.push(SEPARATOR);
 

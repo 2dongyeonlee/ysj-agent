@@ -55,7 +55,7 @@ export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil((async function () {
       await runMorningBriefing(env);
-      await runInfoBriefing(env, null, 1);
+      await runInfoBriefing(env, null, 7);
     })());
   },
 };
@@ -109,7 +109,7 @@ async function route(env, msg) {
 
   if (text.startsWith("/brief")) return runBrief(env, chatId);
   if (text.startsWith("/decision")) return runBrief(env, chatId); // decision 은 /brief 로 통합
-  if (text.startsWith("/info")) return runInfoBriefing(env, chatId, 1);
+  if (text.startsWith("/info")) return runInfoBriefing(env, chatId, 7);
   if (text.startsWith("/project")) {
     const name = text.replace("/project", "").trim();
     return runProjectBriefing(env, chatId, 7, name);
@@ -151,7 +151,7 @@ async function route(env, msg) {
       case "summary":  return summarizeLatest(env, chatId, target);
       case "project":  return runProjectBriefing(env, chatId, 7, target);
       case "decision": return runBrief(env, chatId);
-      case "info":     return runInfoBriefing(env, chatId, 1);
+      case "info":     return runInfoBriefing(env, chatId, 7);
       case "brief":    return runBrief(env, chatId);
       case "question": return handleQA(env, chatId, cleanText);
       default:

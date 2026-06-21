@@ -115,13 +115,14 @@ export async function runInfoBriefing(env, chatId, days) {
     return;
   }
 
-  const lines = ["📊 대외정보 · " + todayText(), SEPARATOR];
+  const lines = ["📊 대외정보 · " + todayText(), SEPARATOR, ""];
   for (const cat of INFO_CATEGORIES) {
     const grouped = items.filter(function (r) { return r.category === cat.name; });
     if (!grouped.length) continue;
     lines.push(cat.icon + " <b>" + cat.name + "</b>");
     for (const row of grouped) {
       lines.push("• " + firstSentence(row.summary) + " (" + issueStamp(row) + ")");
+      lines.push("");
     }
   }
   lines.push(SEPARATOR);
