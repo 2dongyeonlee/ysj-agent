@@ -112,7 +112,53 @@ export async function getInsightsSince(env, sinceIso, filter) {
   if (filter && filter.project)  { where += " AND project = ?";  binds.push(filter.project); }
   if (filter && filter.hasSchedule) { where += " AND schedule != ''"; }
   const { results } = await env.DB.prepare(
-    "SELECT schedule, category, project, summary, people, created_at FROM insights WHERE " + where + " ORDER BY created_at DESC LIMIT 100"
+    "SELECT schedule, category, project, summary, people, followup, done, created_at FROM insights WHERE " + where + " ORDER BY created_at DESC LIMIT 100"
   ).bind(...binds).all();
   return results || [];
+}
+
+// ===== 프로젝트 키워드 분류 (0007) =====
+
+// 모든 {project, keyword} 반환 (분류 시 사전 로드)
+export async function getProjectKeywords(env) {
+  const { results } = await env.DB.prepare(
+    "SELECT project, keyword FROM project_keywords ORDER BY length(keyword) DESC"
+  ).all();
+  return results || [];
+}
+
+// 키워드 추가 (keyword 는 소문자로 저장)
+export async function addProjectKeyword(env, project, keyword) {
+  await env.DB.prepare(
+    "INSERT INTO project_keywords (project, keyword) VALUES (?, ?)"
+  ).bind(String(project).trim(), String(keyword).trim().toLowerCase()).run();
+}
+
+// 프로젝트별 키워드 목록 (project -> [keyword,...])
+export async function listProjects(env) {
+  const { results } = await env.DB.prepare(
+    "SELECT project, keyword FROM project_keywords ORDER BY project, keyword"
+  ).all();
+  const map = {};
+  for (const r of (results || [])) {
+    if (!map[r.project]) map[r.project] = [];
+    map[r.project].push(r.keyword);
+  }
+  return map;
+}
+
+// 해당 프로젝트의 키워드 전체 삭제
+export async function deleteProject(env, project) {
+  const r = await env.DB.prepare(
+    "DELETE FROM project_keywords WHERE project = ?"
+  ).bind(String(project).trim()).run();
+  return (r.meta && r.meta.changes) || 0;
+}
+
+// 해당 프로젝트의 미완료 후속 항목을 완료(done=1) 처리
+export async function updateInsightDone(env, project) {
+  const r = await env.DB.prepare(
+    "UPDATE insights SET done = 1 WHERE project = ? AND done = 0"
+  ).bind(String(project).trim()).run();
+  return (r.meta && r.meta.changes) || 0;
 }

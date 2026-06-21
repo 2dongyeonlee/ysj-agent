@@ -5,7 +5,10 @@ import { extractText } from "./docparse.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
+import { loadProjectKeywords, matchProjects, detectFollowup, detectDone, detectUrgent } from "./insight.js";
+import { updateInsightDone } from "./db.js";
 
+// project 는 LLM 자유판단이 아니라 키워드 매칭으로 결정하므로 스키마에서 제외.
 const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" +
   "[작업] 업로드된 문서를 염 사장 관점에서 분석. 분류와 요약을 한 번에 JSON으로만 반환.\n" +
   "마크다운/설명 없이 JSON만. 모르면 빈 문자열. 지어내지 말 것.\n" +
@@ -13,7 +16,6 @@ const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" +
   "{\n" +
   '  "schedule": "날짜+안건 (예: 6/20 회장 보고), 없으면 \\"\\"",\n' +
   '  "category": "정책|국회|BH|글로벌|언론PR 중 하나 또는 \\"\\"",\n' +
-  '  "project": "Nexus|PJT A|서남권|G건|용인 Pull-in|성과금|TM PI|그룹 광고|PR 중요기사|기타 중 하나 또는 \\"\\"",\n' +
   '  "people": "관련 인물/소속, 없으면 \\"\\"",\n' +
   '  "summary_html": "텔레그램 전송용 요약. 음슴체, 1-2줄, 날짜·사람·안건 <b>굵게</b>. 형식: 📋 <b>제목</b>\\\\n\\\\n📌 핵심\\\\n• 1-2줄"\n' +
   "}";
@@ -40,27 +42,48 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
     console.error("summarize combined parse error", e && e.message);
   }
 
-  // 3) store insight (if anything useful)
-  if (parsed && (parsed.schedule || parsed.category || parsed.project || parsed.summary_html)) {
+  // 3) store insight (if anything useful). project = 키워드 매칭(캡션+파일명+본문).
+  if (parsed && (parsed.schedule || parsed.category || parsed.summary_html)) {
     const plain = String(parsed.summary_html || "").replace(/<\/?[a-zA-Z]+>/g, "").trim();
-    try {
-      await env.DB.prepare(
-        "INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-      ).bind(
-        String(msg.chat.id),
-        "file",
-        (msg.document && msg.document.file_id) || "",
-        String(parsed.schedule || ""),
-        String(parsed.category || ""),
-        String(parsed.project || ""),
-        plain.slice(0, 500),
-        String(parsed.people || "")
-      ).run();
-      console.log("insight saved:", parsed.category || parsed.project || "general", plain.slice(0, 30));
-    } catch (e) {
-      console.error("insight insert error", e && e.message);
+    const caption = (msg.caption || "").trim();
+    const filename = (msg.document && msg.document.file_name) || "";
+    const matchText = caption + " " + filename + " " + text;
+
+    let projects = [];
+    const keywords = await loadProjectKeywords(env);
+    if (keywords) projects = matchProjects(keywords, caption, filename, text);
+
+    const followup = detectFollowup(matchText);
+    const isDone = detectDone(matchText);
+    const urgent = detectUrgent(matchText);
+    const summary = ((urgent ? "[보고요망] " : "") + plain).slice(0, 500);
+
+    const targets = projects.length ? projects : [""];
+    for (const project of targets) {
+      if (project && isDone) {
+        try { await updateInsightDone(env, project); } catch (e) { console.error("updateInsightDone error", e && e.message); }
+      }
+      try {
+        await env.DB.prepare(
+          "INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, followup, done) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        ).bind(
+          String(msg.chat.id),
+          "file",
+          (msg.document && msg.document.file_id) || "",
+          String(parsed.schedule || ""),
+          String(parsed.category || ""),
+          project,
+          summary,
+          String(parsed.people || ""),
+          project ? followup : "",
+          (project && isDone) ? 1 : 0
+        ).run();
+      } catch (e) {
+        console.error("insight insert error", e && e.message);
+      }
     }
+    console.log("insight saved:", (projects.join(",") || parsed.category || "general"), plain.slice(0, 30));
   }
 
   if (!replyToUser) return;

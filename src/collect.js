@@ -36,6 +36,8 @@ export async function collectMessage(env, msg) {
         sourceRef: String(msg.message_id),
         text,
         sender,
+        caption: msg.caption || "",
+        filename: (msg.document && msg.document.file_name) || "",
       });
     }
   }
