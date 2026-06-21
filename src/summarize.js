@@ -5,7 +5,7 @@ import { extractText } from "./docparse.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
-import { loadProjectKeywords, matchProjects, detectFollowup, detectDone, detectUrgent } from "./insight.js";
+import { loadProjectKeywords, matchProjects, detectFollowup, detectDone, detectUrgent, normalizeCategory } from "./insight.js";
 import { updateInsightDone } from "./db.js";
 
 // project 는 LLM 자유판단이 아니라 키워드 매칭으로 결정하므로 스키마에서 제외.
@@ -15,7 +15,7 @@ const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" +
   "스키마:\n" +
   "{\n" +
   '  "schedule": "날짜+안건 (예: 6/20 회장 보고), 없으면 \\"\\"",\n' +
-  '  "category": "정책|국회|BH|글로벌|언론PR 중 하나 또는 \\"\\"",\n' +
+  '  "category": "정책, 국회, BH, 글로벌, 언론PR 중 정확히 하나 또는 \\"\\"",\n' +
   '  "people": "관련 인물/소속, 없으면 \\"\\"",\n' +
   '  "summary_html": "텔레그램 전송용 요약. 음슴체, 1-2줄, 날짜·사람·안건 <b>굵게</b>. 형식: 📋 <b>제목</b>\\\\n\\\\n📌 핵심\\\\n• 1-2줄"\n' +
   "}";
@@ -45,6 +45,7 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
   // 3) store insight (if anything useful). project = 키워드 매칭(캡션+파일명+본문).
   if (parsed && (parsed.schedule || parsed.category || parsed.summary_html)) {
     const plain = String(parsed.summary_html || "").replace(/<\/?[a-zA-Z]+>/g, "").trim();
+    const category = normalizeCategory(parsed.category);
     const caption = (msg.caption || "").trim();
     const filename = (msg.document && msg.document.file_name) || "";
     const matchText = caption + " " + filename + " " + text;
@@ -72,7 +73,7 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
           "file",
           (msg.document && msg.document.file_id) || "",
           String(parsed.schedule || ""),
-          String(parsed.category || ""),
+          category,
           project,
           summary,
           String(parsed.people || ""),
@@ -83,7 +84,7 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
         console.error("insight insert error", e && e.message);
       }
     }
-    console.log("insight saved:", (projects.join(",") || parsed.category || "general"), plain.slice(0, 30));
+    console.log("insight saved:", (projects.join(",") || category || "general"), plain.slice(0, 30));
   }
 
   if (!replyToUser) return;

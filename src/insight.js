@@ -5,18 +5,20 @@
 import { callClaude, MODEL_FAST } from "./claude.js";
 import { getProjectKeywords, updateInsightDone } from "./db.js";
 
+const CATEGORIES = ["정책", "국회", "BH", "글로벌", "언론PR"];
+
 const EXTRACT_SYSTEM = `당신은 염성진 사장님의 자료 분류 비서입니다.
 아래 내용을 읽고 JSON만 반환하세요. 마크다운 금지.
 
 스키마:
 {
   "schedule": "날짜+안건 (예: 6/20 회장 보고). 없으면 빈 문자열",
-  "category": "정책|국회|BH|글로벌|언론PR 중 하나. 없으면 빈 문자열",
+  "category": "정책, 국회, BH, 글로벌, 언론PR 중 정확히 하나. 없으면 빈 문자열",
   "summary": "핵심 1-2줄 한국어",
   "people": "관련 인물/소속, 없으면 빈 문자열"
 }
 
-모든 값은 한국어로 작성하세요. 모르면 빈 문자열로 두세요. 지어내지 마세요.`;
+category에 복수 값을 넣지 마세요. 모든 값은 한국어로 작성하세요. 모르면 빈 문자열로 두세요. 지어내지 마세요.`;
 
 // ===== 키워드 매칭 헬퍼 (summarize.js 등에서 재사용) =====
 
@@ -80,6 +82,18 @@ function cleanJson(raw) {
     .trim();
 }
 
+export function normalizeCategory(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (raw === "대통령실") return "BH";
+  const compact = raw.replace(/[\s·\/,|]+/g, "");
+  if (compact === "언론PR" || compact === "언론홍보") return "언론PR";
+  for (const category of CATEGORIES) {
+    if (raw === category || raw.indexOf(category) !== -1) return category;
+  }
+  return "";
+}
+
 export async function extractInsight(env, { chatId, sourceType, sourceRef, text, sender, caption, filename }) {
   try {
     const body = String(text || "").trim();
@@ -106,7 +120,7 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
 
     const base = {
       schedule: String(parsed.schedule || "").trim(),
-      category: String(parsed.category || "").trim(),
+      category: normalizeCategory(parsed.category),
       summary: String(parsed.summary || "").trim(),
       people: String(parsed.people || "").trim(),
     };

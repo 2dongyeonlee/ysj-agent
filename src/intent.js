@@ -21,8 +21,17 @@ const INTENT_SYSTEM =
 
 export async function classifyIntent(env, text) {
   if (!text || text.length < 2) return { intent: "none", target: "" };
+  const t = String(text || "").trim();
+  if (/(자료|문서|파일|방금|첨부|넥서스|Nexus|PJT|서남권|용인|성과금|TM PI|광고|기사).*(줘|찾아|찾아줘|정리|정리해줘|공유|공유해줘|요약|요약해줘)/i.test(t) ||
+      /(줘|찾아|찾아줘|정리|정리해줘|공유|공유해줘|요약|요약해줘).*(자료|문서|파일|방금|첨부|넥서스|Nexus|PJT|서남권|용인|성과금|TM PI|광고|기사)/i.test(t)) {
+    const target = t
+      .replace(/자료|문서|파일|방금|첨부/g, " ")
+      .replace(/줘|찾아줘|찾아|정리해줘|정리|공유해줘|공유|요약해줘|요약/g, " ")
+      .trim();
+    return { intent: "summary", target };
+  }
   try {
-    const raw = await callClaude(env, "메시지: " + text.slice(0, 500), INTENT_SYSTEM, MODEL_FAST, 150);
+    const raw = await callClaude(env, "메시지: " + t.slice(0, 500), INTENT_SYSTEM, MODEL_FAST, 150);
     const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
     if (!parsed || !parsed.intent) return { intent: "none", target: "" };
     return { intent: parsed.intent, target: parsed.target || "" };
