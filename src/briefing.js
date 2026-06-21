@@ -39,6 +39,13 @@ function stripHtml(text) {
   return String(text || "").replace(/<\/?[a-zA-Z]+>/g, "").replace(/\s+/g, " ").trim();
 }
 
+function truncateWords(text, max) {
+  if (text.length <= max) return text;
+  const head = text.slice(0, max).trim();
+  const cut = head.lastIndexOf(" ");
+  return (cut > 20 ? head.slice(0, cut) : head).trim() + "…";
+}
+
 function oneLine(text, max = 70) {
   const cleaned = stripHtml(text)
     .replace(/^📋\s*[^📌\n]+/u, "")
@@ -50,7 +57,7 @@ function oneLine(text, max = 70) {
   const bullet = cleaned.match(/(?:^|\s)•\s*([^•\n]+)/);
   const source = bullet ? bullet[1].trim() : cleaned;
   const sentence = source.split(/(?<=[.!?。]|다\.|임\.|음\.)\s+/u)[0] || source;
-  return sentence.length > max ? sentence.slice(0, max).trim() + "…" : sentence;
+  return truncateWords(sentence, max);
 }
 
 function issueDate(row) {
