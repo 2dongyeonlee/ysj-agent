@@ -12,22 +12,33 @@ CREATE TABLE IF NOT EXISTS project_keywords (
 );
 CREATE INDEX IF NOT EXISTS idx_pkw_keyword ON project_keywords(keyword);
 
-ALTER TABLE insights ADD COLUMN followup TEXT DEFAULT '';
-ALTER TABLE insights ADD COLUMN done INTEGER DEFAULT 0;
-
-INSERT INTO project_keywords (project, keyword) VALUES
-  ('넥서스', '넥서스'),
-  ('넥서스', 'nexus'),
-  ('PjtA', 'pjta'),
-  ('PjtA', 'pjt a'),
-  ('서남권', '서남권'),
-  ('G건', 'g건'),
-  ('용인 Pull-in', '용인 pull-in'),
-  ('용인 Pull-in', 'pull in'),
-  ('용인 Pull-in', 'pull-in'),
-  ('용인 Pull-in', '용인'),
-  ('성과금', '성과금'),
-  ('TM PI', 'tm pi'),
-  ('그룹 광고', '그룹광고'),
-  ('그룹 광고', '그룹 광고'),
-  ('PR 중요기사', 'pr중요기사');
+INSERT INTO project_keywords (project, keyword)
+SELECT '넥서스', '넥서스' WHERE NOT EXISTS (SELECT 1 FROM project_keywords WHERE project = '넥서스' AND keyword = '넥서스');
+INSERT INTO project_keywords (project, keyword)
+SELECT '넥서스', 'nexus' WHERE NOT EXISTS (SELECT 1 FROM project_keywords WHERE project = '넥서스' AND keyword = 'nexus');
+INSERT INTO project_keywords (project, keyword)
+SELECT 'PjtA', 'pjta' WHERE NOT EXISTS (SELECT 1 FROM project_keywords WHERE project = 'PjtA' AND keyword = 'pjta');
+INSERT INTO project_keywords (project, keyword)
+SELECT 'PjtA', 'pjt a' WHERE NOT EXISTS (SELECT 1 FROM project_keywords WHERE project = 'PjtA' AND keyword = 'pjt a');
+INSERT INTO project_keywords (project, keyword)
+SELECT '서남권', '서남권' WHERE NOT EXISTS (SELECT 1 FROM project_keywords WHERE project = '서남권' AND keyword = '서남권');
+INSERT INTO project_keywords (project, keyword)
+SELECT 'G건', 'g건' WHERE NOT EXISTS (SELECT 1 FROM project_keywords WHERE project = 'G건' AND keyword = 'g건');
+INSERT INTO project_keywords (project, keyword)
+SELECT '용인 Pull-in', '용인 pull-in' WHERE NOT EXISTS (SELECT 1 FROM project_keywords WHERE project = '용인 Pull-in' AND keyword = '용인 pull-in');
+INSERT INTO project_keywords (project, keyword)
+SELECT '용인 Pull-in', 'pull in' WHERE NOT EXISTS (SELECT 1 FROM project_keywords WHERE project = '용인 Pull-in' AND keyword = 'pull in');
+INSERT INTO project_keywords (project, keyword)
+SELECT '용인 Pull-in', 'pull-in' WHERE NOT EXISTS (SELECT 1 FROM project_keywords WHERE project = '용인 Pull-in' AND keyword = 'pull-in');
+INSERT INTO project_keywords (project, keyword)
+SELECT '용인 Pull-in', '용인' WHERE NOT EXISTS (SELECT 1 FROM project_keywords WHERE project = '용인 Pull-in' AND keyword = '용인');
+INSERT INTO project_keywords (project, keyword)
+SELECT '성과금', '성과금' WHERE NOT EXISTS (SELECT 1 FROM project_keywords WHERE project = '성과금' AND keyword = '성과금');
+INSERT INTO project_keywords (project, keyword)
+SELECT 'TM PI', 'tm pi' WHERE NOT EXISTS (SELECT 1 FROM project_keywords WHERE project = 'TM PI' AND keyword = 'tm pi');
+INSERT INTO project_keywords (project, keyword)
+SELECT '그룹 광고', '그룹광고' WHERE NOT EXISTS (SELECT 1 FROM project_keywords WHERE project = '그룹 광고' AND keyword = '그룹광고');
+INSERT INTO project_keywords (project, keyword)
+SELECT '그룹 광고', '그룹 광고' WHERE NOT EXISTS (SELECT 1 FROM project_keywords WHERE project = '그룹 광고' AND keyword = '그룹 광고');
+INSERT INTO project_keywords (project, keyword)
+SELECT 'PR 중요기사', 'pr중요기사' WHERE NOT EXISTS (SELECT 1 FROM project_keywords WHERE project = 'PR 중요기사' AND keyword = 'pr중요기사');

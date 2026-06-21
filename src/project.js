@@ -1,6 +1,6 @@
 // project.js — weekly project status from structured insights.
 
-import { getInsightsSince } from "./db.js";
+import { getInsightsSince, getProjectTimeline } from "./db.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
@@ -21,10 +21,68 @@ function sinceDaysIso(days) {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
+function stripHtml(text) {
+  return String(text || "").replace(/<\/?[a-zA-Z]+>/g, "").replace(/\s+/g, " ").trim();
+}
+
+function shortLine(text, max) {
+  const s = stripHtml(text);
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
+function dateText(row) {
+  return row.schedule || String(row.created_at || "").slice(0, 10) || "날짜 미상";
+}
+
+function docName(row) {
+  return row.filename || "자료";
+}
+
+function formatSingleProject(project, row) {
+  const lines = [
+    "📊 <b>" + project + "</b> 단건 요약",
+    "🗓 " + dateText(row) + (row.sender ? " · 👤 " + row.sender : ""),
+    "📄 " + docName(row),
+    "└ " + shortLine(row.summary, 180),
+  ];
+  if (row.decision) lines.push("⚖️ 결정: " + row.decision);
+  if (row.source) lines.push("📎 근거: " + row.source);
+  return lines.join("\n");
+}
+
+function formatProjectTimeline(project, rows) {
+  if (rows.length === 1) return formatSingleProject(project, rows[0]);
+  const lines = [
+    "📊 <b>" + project + "</b> 진행 경과",
+    "═══════════════",
+  ];
+  for (const row of rows) {
+    lines.push("🗓 " + dateText(row) + (row.sender ? " · 👤 " + row.sender : ""));
+    lines.push("  📄 " + docName(row));
+    lines.push("  └ " + shortLine(row.summary, 180));
+    if (row.decision) lines.push("  ⚖️ 결정: " + row.decision);
+    if (row.source) lines.push("  📎 근거: " + row.source);
+  }
+  const first = rows[0];
+  const latest = rows[rows.length - 1];
+  lines.push("═══════════════");
+  lines.push("🔍 경과: " + shortLine(first.summary, 80) + " → " + shortLine(latest.summary, 80));
+  lines.push("📌 현재: " + shortLine(latest.summary, 120));
+  return lines.join("\n");
+}
+
 export async function runProjectBriefing(env, chatId, days, name) {
+  if (name) {
+    const timeline = await getProjectTimeline(env, name);
+    if (!timeline.length) {
+      if (chatId) await sendMessage(env, chatId, "최근 정리할 프로젝트 현황이 없습니다.");
+      return;
+    }
+    return sendMessage(env, chatId, formatProjectTimeline(name, timeline));
+  }
+
   const rows = await getInsightsSince(env, sinceDaysIso(days || 7), {});
   let proj = (rows || []).filter(function (r) { return r.project && r.project !== "기타"; });
-  if (name) proj = proj.filter(function (r) { return (r.project || '').toLowerCase().indexOf(name.toLowerCase()) !== -1; });
   if (!proj.length) {
     if (chatId) await sendMessage(env, chatId, "최근 정리할 프로젝트 현황이 없습니다.");
     return;

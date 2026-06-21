@@ -22,10 +22,12 @@ const EXTRACT_SYSTEM = `당신은 염성진 사장님의 자료 분류 비서입
   "schedule": "날짜+안건 (예: 6/20 회장 보고). 없으면 빈 문자열",
   "category": "정책, 국회, BH, 글로벌, 언론PR 중 정확히 하나. 없으면 빈 문자열",
   "summary": "반드시 이 양식 그대로 채움: 📄 <b>{제목}</b> / 🗓 {날짜} · 🏷 {프로젝트} / 🎯 핵심: {이 문서가 말하는 단 하나, 1줄} / 💰 규모: {핵심 숫자 2~3개, 없으면 —} / ⚖️ 판단필요: {사장이 결정할 것, 없으면 현 단계 없음} / 📌 상태: {확정 / 검토중 / 토의용 중 하나}",
-  "people": "관련 인물/소속, 없으면 빈 문자열"
+  "people": "관련 인물/소속, 없으면 빈 문자열",
+  "decision": "문서에서 확정/결정/승인된 사항. 예정/검토중/논의/토의용은 제외. 명시 없으면 빈 문자열",
+  "source": "결정 근거 출처가 문서에 명시돼 있으면 그대로 작성(예: 5/30 전략위 보고). 없으면 빈 문자열"
 }
 
-category에 복수 값을 넣지 마세요. 모든 값은 한국어로 작성하세요. 모르면 빈 문자열로 두세요. 지어내지 마세요.`;
+category에 복수 값을 넣지 마세요. decision/source는 문서에 명시된 것만 쓰고 추론하지 마세요. 모든 값은 한국어로 작성하세요. 모르면 빈 문자열로 두세요. 지어내지 마세요.`;
 
 // ===== 키워드 매칭 헬퍼 (summarize.js 등에서 재사용) =====
 
@@ -101,6 +103,18 @@ export function normalizeCategory(value) {
   return "";
 }
 
+export function normalizeDecision(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/예정|검토|논의|토의|계획/.test(raw)) return "";
+  if (!/확정|결정|승인/.test(raw)) return "";
+  return raw;
+}
+
+export function normalizeSource(value) {
+  return String(value || "").trim();
+}
+
 export async function extractInsight(env, { chatId, sourceType, sourceRef, text, sender, caption, filename }) {
   try {
     const body = String(text || "").trim();
@@ -130,6 +144,8 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
       category: normalizeCategory(parsed.category),
       summary: String(parsed.summary || "").trim(),
       people: String(parsed.people || "").trim(),
+      decision: normalizeDecision(parsed.decision),
+      source: normalizeSource(parsed.source),
     };
 
     if (!base.schedule && !base.category && !base.summary) {
@@ -159,8 +175,8 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
         try { await updateInsightDone(env, project); } catch (e) { console.error("updateInsightDone error", e && e.message); }
       }
       await env.DB.prepare(
-        `INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, sender, input_chars, read_chars, followup, done)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, sender, input_chars, read_chars, followup, done, decision, source)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
         String(chatId),
         sourceType || "",
@@ -174,7 +190,9 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
         body.length,
         readText.length,
         project ? followup : "",
-        (project && isDone) ? 1 : 0
+        (project && isDone) ? 1 : 0,
+        base.decision || null,
+        base.source || null
       ).run();
     }
 

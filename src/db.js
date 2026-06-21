@@ -112,8 +112,17 @@ export async function getInsightsSince(env, sinceIso, filter) {
   if (filter && filter.project)  { where += " AND project = ?";  binds.push(filter.project); }
   if (filter && filter.hasSchedule) { where += " AND schedule != ''"; }
   const { results } = await env.DB.prepare(
-    "SELECT schedule, category, project, summary, people, followup, done, created_at FROM insights WHERE " + where + " ORDER BY created_at DESC LIMIT 100"
+    "SELECT schedule, category, project, summary, people, followup, done, decision, source, created_at FROM insights WHERE " + where + " ORDER BY created_at DESC LIMIT 100"
   ).bind(...binds).all();
+  return results || [];
+}
+
+export async function getProjectTimeline(env, project) {
+  const { results } = await env.DB.prepare(
+    "SELECT i.schedule, i.project, i.summary, i.people, i.sender, i.decision, i.source, i.created_at, " +
+    "(SELECT filename FROM files f WHERE f.file_id = i.source_ref ORDER BY id DESC LIMIT 1) AS filename " +
+    "FROM insights i WHERE i.project LIKE ? ORDER BY i.created_at ASC LIMIT 50"
+  ).bind("%" + String(project || "").trim() + "%").all();
   return results || [];
 }
 

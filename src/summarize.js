@@ -5,7 +5,7 @@ import { extractText } from "./docparse.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
-import { loadProjectKeywords, matchProjects, detectFollowup, detectDone, detectUrgent, normalizeCategory } from "./insight.js";
+import { loadProjectKeywords, matchProjects, detectFollowup, detectDone, detectUrgent, normalizeCategory, normalizeDecision, normalizeSource } from "./insight.js";
 import { updateInsightDone } from "./db.js";
 
 // project 는 LLM 자유판단이 아니라 키워드 매칭으로 결정하므로 스키마에서 제외.
@@ -23,6 +23,8 @@ const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" +
   '  "schedule": "날짜+안건 (예: 6/20 회장 보고), 없으면 \\"\\"",\n' +
   '  "category": "정책, 국회, BH, 글로벌, 언론PR 중 정확히 하나 또는 \\"\\"",\n' +
   '  "people": "관련 인물/소속, 없으면 \\"\\"",\n' +
+  '  "decision": "문서에서 확정/결정/승인된 사항. 예정/검토중/논의/토의용은 제외. 명시 없으면 \\"\\"",\n' +
+  '  "source": "결정 근거 출처가 문서에 명시돼 있으면 그대로 작성(예: 5/30 전략위 보고). 없으면 \\"\\"",\n' +
   '  "summary_html": "반드시 이 양식 그대로 채움: 📄 <b>{제목}</b>\\\\n🗓 {날짜} · 🏷 {프로젝트}\\\\n🎯 핵심: {이 문서가 말하는 단 하나, 1줄}\\\\n💰 규모: {핵심 숫자 2~3개, 없으면 —}\\\\n⚖️ 판단필요: {사장이 결정할 것, 없으면 현 단계 없음}\\\\n📌 상태: {확정 / 검토중 / 토의용 중 하나}"\n' +
   "}";
 
@@ -52,6 +54,8 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
   if (parsed && (parsed.schedule || parsed.category || parsed.summary_html)) {
     const plain = String(parsed.summary_html || "").replace(/<\/?[a-zA-Z]+>/g, "").trim();
     const category = normalizeCategory(parsed.category);
+    const decision = normalizeDecision(parsed.decision);
+    const source = normalizeSource(parsed.source);
     const caption = (msg.caption || "").trim();
     const filename = (msg.document && msg.document.file_name) || "";
     const matchText = caption + " " + filename + " " + text;
@@ -72,8 +76,8 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
       }
       try {
         await env.DB.prepare(
-          "INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, followup, done) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          "INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, followup, done, decision, source) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         ).bind(
           String(msg.chat.id),
           "file",
@@ -84,7 +88,9 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
           summary,
           String(parsed.people || ""),
           project ? followup : "",
-          (project && isDone) ? 1 : 0
+          (project && isDone) ? 1 : 0,
+          decision || null,
+          source || null
         ).run();
       } catch (e) {
         console.error("insight insert error", e && e.message);
