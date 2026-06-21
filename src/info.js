@@ -49,14 +49,27 @@ function firstSentence(text) {
 
 function issueDate(row) {
   const source = String(row.schedule || "") + "\n" + String(row.summary || "");
+  const full = source.match(/20\d{2}[-.년]\s*(\d{1,2})[-.월]\s*(\d{1,2})/);
+  if (full) {
+    const month = Number(full[1]);
+    const day = Number(full[2]);
+    return day > 0 ? month + "/" + day : month + "월";
+  }
   const slash = source.match(/(\d{1,2})\/(\d{1,2})/);
-  if (slash) return Number(slash[1]) + "/" + Number(slash[2]);
+  if (slash) {
+    const month = Number(slash[1]);
+    const day = Number(slash[2]);
+    return day > 0 ? month + "/" + day : month + "월";
+  }
   const dotted = source.match(/(\d{1,2})\.(\d{1,2})/);
-  if (dotted) return Number(dotted[1]) + "/" + Number(dotted[2]);
+  if (dotted) {
+    const month = Number(dotted[1]);
+    const day = Number(dotted[2]);
+    return day > 0 ? month + "/" + day : month + "월";
+  }
   const korean = source.match(/(\d{1,2})월\s*(\d{1,2})일/);
   if (korean) return Number(korean[1]) + "/" + Number(korean[2]);
-  const d = new Date(row.created_at || Date.now());
-  return (d.getMonth() + 1) + "/" + d.getDate();
+  return "—";
 }
 
 function issueStamp(row) {
@@ -67,9 +80,16 @@ function issueStamp(row) {
 }
 
 function sortByIssueDate(a, b) {
-  const [am, ad] = issueDate(a).split("/").map(Number);
-  const [bm, bd] = issueDate(b).split("/").map(Number);
-  return (am * 100 + ad) - (bm * 100 + bd);
+  return issueScore(a) - issueScore(b);
+}
+
+function issueScore(row) {
+  const text = issueDate(row);
+  if (text === "—") return 9999;
+  const parts = text.split("/");
+  const month = parseInt(parts[0], 10);
+  const day = parts[1] ? parseInt(parts[1], 10) : 15;
+  return month * 100 + day;
 }
 
 async function sendLongMessage(env, chatId, text) {

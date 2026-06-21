@@ -63,20 +63,35 @@ function oneLine(text, max = 70) {
 function issueDate(row) {
   const source = String(row.schedule || "") + "\n" + String(row.summary || "");
   const iso = source.match(/20\d{2}[-.년]\s*(\d{1,2})[-.월]\s*(\d{1,2})/);
-  if (iso) return Number(iso[1]) + "/" + Number(iso[2]);
+  if (iso) {
+    const month = Number(iso[1]);
+    const day = Number(iso[2]);
+    return day > 0 ? month + "/" + day : month + "월";
+  }
   const slash = source.match(/(\d{1,2})\/(\d{1,2})/);
-  if (slash) return Number(slash[1]) + "/" + Number(slash[2]);
+  if (slash) {
+    const month = Number(slash[1]);
+    const day = Number(slash[2]);
+    return day > 0 ? month + "/" + day : month + "월";
+  }
   const dotted = source.match(/(\d{1,2})\.(\d{1,2})/);
-  if (dotted) return Number(dotted[1]) + "/" + Number(dotted[2]);
+  if (dotted) {
+    const month = Number(dotted[1]);
+    const day = Number(dotted[2]);
+    return day > 0 ? month + "/" + day : month + "월";
+  }
   const korean = source.match(/(\d{1,2})월\s*(\d{1,2})일/);
   if (korean) return Number(korean[1]) + "/" + Number(korean[2]);
-  const d = new Date(row.created_at || Date.now());
-  return (d.getMonth() + 1) + "/" + d.getDate();
+  return "—";
 }
 
 function issueScore(row) {
-  const [m, d] = issueDate(row).split("/").map(Number);
-  return m * 100 + d;
+  const text = issueDate(row);
+  if (text === "—") return 9999;
+  const parts = text.split("/");
+  const month = parseInt(parts[0], 10);
+  const day = parts[1] ? parseInt(parts[1], 10) : 15;
+  return month * 100 + day;
 }
 
 function sortByImminence(a, b) {
