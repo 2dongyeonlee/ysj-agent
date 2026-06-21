@@ -179,13 +179,25 @@ export async function runMorningBriefing(env, replyChatId) {
 }
 
 export async function runBrief(env, chatId) {
-  const rows = await getInsightsSince(env, sinceDaysIso(14), {});
-  const useful = (rows || []).filter(function (r) { return r.summary; }).sort(sortByImminence);
-  if (!useful.length) return sendMessage(env, chatId, "현재 정리된 현안이 없습니다.");
+  const INFO_CATS = ["정부", "국회", "BH", "글로벌", "언론"];
+  // 대외정보 (category 있고 project 없는 것)
+  const infoRows = (await getInsightsSince(env, sinceDaysIso(7), { categoryIn: INFO_CATS, projectEmpty: true })) || [];
+  // 프로젝트 (project 있는 것) — 결정·보고 건 소스
+  const projRows = (await getInsightsSince(env, sinceDaysIso(14), { projectNotEmpty: true })) || [];
+  // O/I 등 내부보고 (category 비움, project 비움)
+  const internalRows = (await getInsightsSince(env, sinceDaysIso(14), { projectEmpty: true })) || []
+    .filter(function(r) { return !r.category || !INFO_CATS.includes(r.category); });
 
-  const decisions = useful.filter(isDecisionRow).slice(0, 5);
-  const meetings = useful.filter(isMeetingRow).slice(0, 5);
-  const reports = useful.filter(isReportRow).slice(0, 5);
+  const allRows = [...infoRows, ...projRows, ...internalRows]
+    .filter(function(r) { return r.summary; });
+  const unique = allRows.filter(function(r, i) {
+    return allRows.findIndex(function(x) { return x.source_ref === r.source_ref && r.source_ref; }) === i || !r.source_ref;
+  });
+  if (!unique.length) return sendMessage(env, chatId, "현재 정리된 현안이 없습니다.");
+
+  const decisions = infoRows.filter(isDecisionRow).concat(projRows.filter(isDecisionRow)).slice(0, 5);
+  const meetings = infoRows.filter(isMeetingRow).slice(0, 4);
+  const reports = internalRows.filter(isReportRow).concat(infoRows.filter(isReportRow)).slice(0, 5);
 
   const lines = ["🗞 브리핑 · " + todayText(), SEPARATOR, ""];
   lines.push("🚨 <b>결정·확인 필요</b>");
