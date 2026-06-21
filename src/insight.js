@@ -1,36 +1,36 @@
-// insight.js - uploaded/content-time structured extraction into insights.
-// project = keyword matching, info category = LLM classification. They are stored separately.
+// insight.js - content-time structured extraction into insights.
+// source_type is the input path (file/message/etc). project/category are mutually separated.
 
 import { callClaude, MODEL_FAST } from "./claude.js";
 import { getProjectKeywords, updateInsightDone } from "./db.js";
 
-const INFO_CATEGORIES = ["국회", "정부", "BH", "글로벌", "언론"];
+const INFO_CATEGORIES = ["정부", "국회", "BH", "글로벌", "언론"];
 
-const EXTRACT_SYSTEM = `당신은 염성진 사장 대외정보 정리 비서다. 입력은 담당자가 공유한 DM 원문이다.
+const EXTRACT_SYSTEM = `당신은 염성진 사장 자료 분류 비서다.
 JSON만 반환하라. 마크다운 금지.
 
-[분류] category는 아래 5개 중 하나만 쓴다. 그 외 분류 생성 금지.
-안 맞으면 가장 가까운 분류로 배정하되, 대외정보가 아니면 빈 문자열로 둔다.
-- 국회: 입법·의원·상임위·법안·정당
-- 정부: 부처·공정위·산업부·규제기관
-- BH: 대통령(V)·대통령실·총리·인선
-- 글로벌: 해외기업·국제 산업동향·통상
-- 언론: 보도·기사·PR·미디어 대응·재단/캠페인 (대면·정세 구분 없이 모두 여기)
+[분류 규칙]
+1. 자료 성격을 먼저 판정:
+   - 프로젝트 추진 문서(nexus 등) → project=프로젝트명, category 비움
+   - 대외정보(외부 정세·대면 활동) → category=5개 중 하나, project 비움
+   - 내부 보고/운영계획(O/I 등) → category·project 모두 비움
+2. category는 5개만(그 외·임의생성 금지): 정부 / 국회 / BH / 글로벌 / 언론
+   - "정책"·"언론PR" 쓰지 말 것 → 정부·언론으로.
+3. 대면 활동도 대외정보다. 만난 상대 소속으로 category 분류(정부 인사 면담→정부).
+4. project는 nexus/넥서스 표기를 'nexus'로 통일.
+5. 없는 값은 빈 문자열(''). 추론·창작 금지.
 
-[보존] 원문 항목을 합치지 말고 핵심을 1~2줄로 남긴다.
-사람을 만난 내용이면 만난 사람·소속을 summary 또는 people에 포함한다.
-
-[금지] 작성자·날짜·분류를 추론 생성하지 않는다. 결정사항·출처는 문서에 명시된 것만 쓴다.
-"예정/검토중/논의/토의"는 결정이 아니다.
+[결정/출처]
+decision·followup 컬럼은 사용하지 않는다. 결정사항은 summary에 문서가 명시한 내용만 짧게 포함한다.
 
 스키마:
 {
+  "kind": "project | info | internal",
+  "category": "정부, 국회, BH, 글로벌, 언론 중 하나. kind가 info가 아니면 빈 문자열",
+  "project": "프로젝트명. nexus/넥서스는 nexus. kind가 project가 아니면 빈 문자열",
   "schedule": "날짜+안건. 없으면 빈 문자열",
-  "category": "국회, 정부, BH, 글로벌, 언론 중 하나. 대외정보가 아니면 빈 문자열",
   "summary": "핵심 1~2줄",
-  "people": "관련 인물/소속. 없으면 빈 문자열",
-  "decision": "문서에서 확정/결정/승인된 사항만. 없으면 빈 문자열",
-  "source": "결정 근거 출처가 명시돼 있으면 그대로. 없으면 빈 문자열"
+  "people": "관련 인물/소속. 없으면 빈 문자열"
 }`;
 
 export async function loadProjectKeywords(env) {
@@ -56,11 +56,12 @@ export function matchProjects(keywords, caption, filename, body) {
     for (const row of keywords) {
       const kw = String(row.keyword || "").toLowerCase();
       if (!kw) continue;
-      if (row.project === "PR 중요기사") {
-        if (capLower.indexOf("pr중요기사") === 0 && hit.indexOf(row.project) === -1) hit.push(row.project);
+      const project = normalizeProject(row.project);
+      if (project === "PR 중요기사") {
+        if (capLower.indexOf("pr중요기사") === 0 && hit.indexOf(project) === -1) hit.push(project);
         continue;
       }
-      if (src.indexOf(kw) !== -1 && hit.indexOf(row.project) === -1) hit.push(row.project);
+      if (src.indexOf(kw) !== -1 && hit.indexOf(project) === -1) hit.push(project);
     }
     if (hit.length) return hit;
   }
@@ -91,8 +92,8 @@ function cleanJson(raw) {
 export function normalizeCategory(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  if (raw === "대통령실") return "BH";
   if (raw === "정책") return "정부";
+  if (raw === "대통령실") return "BH";
   if (raw === "언론PR" || raw === "언론홍보" || raw === "PR") return "언론";
   for (const category of INFO_CATEGORIES) {
     if (raw === category || raw.indexOf(category) !== -1) return category;
@@ -100,16 +101,19 @@ export function normalizeCategory(value) {
   return "";
 }
 
-export function normalizeDecision(value) {
+export function normalizeProject(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  if (/예정|검토|논의|토의|계획/.test(raw)) return "";
-  if (!/확정|결정|승인/.test(raw)) return "";
+  if (/^nexus$/i.test(raw) || raw === "넥서스") return "nexus";
   return raw;
 }
 
-export function normalizeSource(value) {
-  return String(value || "").trim();
+export function normalizeDecision() {
+  return "";
+}
+
+export function normalizeSource() {
+  return "";
 }
 
 export function parseInfoMeta(text, fallbackSender, fallbackDate) {
@@ -127,15 +131,10 @@ export function parseInfoMeta(text, fallbackSender, fallbackDate) {
   return { author, reportDate: reportDate || "—" };
 }
 
-function looksLikeInfoText(text, category) {
-  if (category) return true;
-  return /국회|의원|상임위|법안|정당|정부|부처|공정위|공정거래위원회|산업부|규제|대통령|대통령실|총리|인선|글로벌|해외|통상|언론|기사|보도|PR|미디어|재단|캠페인/.test(String(text || ""));
-}
-
 async function insertInsight(env, row) {
   await env.DB.prepare(
-    `INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, sender, input_chars, read_chars, followup, done, decision, source, author, report_date)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, sender, input_chars, read_chars, author, report_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     String(row.chatId),
     row.sourceType || "",
@@ -148,10 +147,6 @@ async function insertInsight(env, row) {
     row.sender || "",
     row.inputChars || 0,
     row.readChars || 0,
-    row.followup || "",
-    row.done ? 1 : 0,
-    row.decision || null,
-    row.source || null,
     row.author || null,
     row.reportDate || null
   ).run();
@@ -166,7 +161,6 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
     const fname = String(filename || "").trim();
 
     const raw = await callClaude(env, "내용:\n" + readText, EXTRACT_SYSTEM, MODEL_FAST, 500);
-
     let parsed;
     try {
       parsed = JSON.parse(cleanJson(raw));
@@ -175,91 +169,41 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
       return null;
     }
 
-    const base = {
-      schedule: String(parsed.schedule || "").trim(),
-      category: normalizeCategory(parsed.category),
-      summary: String(parsed.summary || "").trim(),
-      people: String(parsed.people || "").trim(),
-      decision: normalizeDecision(parsed.decision),
-      source: normalizeSource(parsed.source),
-    };
-
-    if (!base.schedule && !base.category && !base.summary) return null;
-
     const matchText = cap + " " + fname + " " + body;
-    let projects = [];
     const keywords = await loadProjectKeywords(env);
-    if (keywords && body.length >= 10) projects = matchProjects(keywords, cap, fname, body);
-
-    const followup = detectFollowup(matchText);
-    const isDone = detectDone(matchText);
-    const urgent = detectUrgent(matchText);
-    const summary = (urgent ? "[보고요망] " : "") + base.summary;
+    const matchedProjects = keywords ? matchProjects(keywords, cap, fname, body) : [];
+    const llmProject = normalizeProject(parsed.project);
+    const projects = matchedProjects.length ? matchedProjects : (llmProject ? [llmProject] : []);
+    const kind = String(parsed.kind || "").trim();
+    const isProject = projects.length || kind === "project";
+    const category = isProject ? "" : normalizeCategory(parsed.category);
+    const project = isProject ? (projects[0] || llmProject) : "";
+    const summary = (detectUrgent(matchText) ? "[보고요망] " : "") + String(parsed.summary || "").trim();
     const meta = parseInfoMeta(body, sender, receivedAt);
 
-    for (const project of projects) {
-      if (project && isDone) {
-        try { await updateInsightDone(env, project); } catch (e) { console.error("updateInsightDone error", e && e.message); }
-      }
-      await insertInsight(env, {
-        chatId,
-        sourceType: sourceType || "",
-        sourceRef,
-        schedule: base.schedule,
-        category: base.category,
-        project,
-        summary,
-        people: base.people,
-        sender,
-        inputChars: body.length,
-        readChars: readText.length,
-        followup,
-        done: isDone,
-        decision: base.decision,
-        source: base.source,
-      });
+    if (!summary && !category && !project) return null;
+    if (project && detectDone(matchText)) {
+      try { await updateInsightDone(env, project); } catch (e) { console.error("updateInsightDone error", e && e.message); }
     }
 
-    if (base.category && looksLikeInfoText(body, base.category)) {
-      await insertInsight(env, {
-        chatId,
-        sourceType: "info",
-        sourceRef,
-        schedule: base.schedule,
-        category: base.category,
-        project: "",
-        summary,
-        people: base.people,
-        sender,
-        inputChars: body.length,
-        readChars: readText.length,
-        decision: base.decision,
-        source: base.source,
-        author: meta.author,
-        reportDate: meta.reportDate,
-      });
-    }
+    await insertInsight(env, {
+      chatId,
+      sourceType: sourceType || "",
+      sourceRef,
+      schedule: String(parsed.schedule || "").trim(),
+      category,
+      project,
+      summary,
+      people: String(parsed.people || "").trim(),
+      sender,
+      inputChars: body.length,
+      readChars: readText.length,
+      author: category ? meta.author : null,
+      reportDate: category ? meta.reportDate : null,
+    });
 
-    if (!projects.length && !base.category) {
-      await insertInsight(env, {
-        chatId,
-        sourceType: sourceType || "",
-        sourceRef,
-        schedule: base.schedule,
-        category: "",
-        project: "",
-        summary,
-        people: base.people,
-        sender,
-        inputChars: body.length,
-        readChars: readText.length,
-        decision: base.decision,
-        source: base.source,
-      });
-    }
-
-    console.log("insight saved:", (projects.join(",") || base.category || "general"), base.summary.slice(0, 30));
-    return { ...base, projects, followup, done: isDone, urgent };
+    console.log("insight saved:", project || category || "general", summary.slice(0, 30));
+    return { schedule: parsed.schedule || "", category, project, summary, people: parsed.people || "" };
   } catch (e) {
     console.error("extractInsight error", e && (e.stack || e.message) || e);
     return null;

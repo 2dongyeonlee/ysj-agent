@@ -1,25 +1,9 @@
-// project.js — weekly project status from structured insights.
+// project.js - grouped project briefing from structured insights.
 
-import { getInsightsSince, getProjectTimeline } from "./db.js";
-import { callClaude, MODEL_SMART } from "./claude.js";
+import { getProjectTimeline } from "./db.js";
 import { sendMessage } from "./telegram.js";
-import { PERSONA_STYLE } from "./persona.js";
 
-const PROJECT_SYSTEM = PERSONA_STYLE + "\n\n" +
-  "[작업] 아래 항목을 프로젝트별로만 정리. 각 항목의 [프로젝트명]을 그대로 제목으로 사용.\n" +
-  "절대 규칙:\n" +
-  "- 제목은 입력에 있는 [프로젝트명]만 사용. '정치 동향', '경쟁사 동향', '정책 동향' 같은 새 카테고리/소제목을 만들지 말 것.\n" +
-  "- 입력에 없는 내용을 추가하지 말 것. 대외동향·뉴스는 프로젝트가 아니므로 포함하지 말 것.\n" +
-  "- 한 프로젝트당 1-2줄. 날짜·사람·안건 <b>강조</b>.\n" +
-  "- 항목 끝의 (후속:수정/보완) 표시는 '후속(수정/보완)'으로, (완료) 표시는 '✅ 완료'로 반영.\n" +
-  "출력 형식:\n\n" +
-  "📊 <b>프로젝트 주간 현황</b>\n\n" +
-  "<b>{프로젝트명}</b>\n• 1-2줄 진행/후속\n\n" +
-  "(입력에 있는 프로젝트만 반복. 동향·이슈 소제목 금지)";
-
-function sinceDaysIso(days) {
-  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-}
+const NEXUS_SUBS = ["환경재단", "환경연구재단", "환경 연구재단", "AI교육", "문화 C-Project"];
 
 function stripHtml(text) {
   return String(text || "").replace(/<\/?[a-zA-Z]+>/g, "").replace(/\s+/g, " ").trim();
@@ -30,75 +14,86 @@ function shortLine(text, max) {
   return s.length > max ? s.slice(0, max - 1) + "…" : s;
 }
 
+function normalizeProjectName(project) {
+  const p = String(project || "").trim();
+  if (/^nexus$/i.test(p) || p === "넥서스") return "nexus";
+  return p;
+}
+
+function displayProjectName(project) {
+  return normalizeProjectName(project) === "nexus" ? "넥서스" : project;
+}
+
 function dateText(row) {
-  return row.schedule || String(row.created_at || "").slice(0, 10) || "날짜 미상";
+  const schedule = String(row.schedule || "").trim();
+  if (schedule) return schedule;
+  const d = new Date(row.created_at || Date.now());
+  return (d.getMonth() + 1) + "/" + d.getDate();
 }
 
-function docName(row) {
-  return row.filename || "자료";
-}
-
-function formatSingleProject(project, row) {
-  const lines = [
-    "📊 <b>" + project + "</b> 단건 요약",
-    "🗓 " + dateText(row) + (row.sender ? " · 👤 " + row.sender : ""),
-    "📄 " + docName(row),
-    "└ " + shortLine(row.summary, 180),
-  ];
-  if (row.decision) lines.push("⚖️ 결정: " + row.decision);
-  if (row.source) lines.push("📎 근거: " + row.source);
-  return lines.join("\n");
-}
-
-function formatProjectTimeline(project, rows) {
-  if (rows.length === 1) return formatSingleProject(project, rows[0]);
-  const lines = [
-    "📊 <b>" + project + "</b> 진행 경과",
-    "═══════════════",
-  ];
-  for (const row of rows) {
-    lines.push("🗓 " + dateText(row) + (row.sender ? " · 👤 " + row.sender : ""));
-    lines.push("  📄 " + docName(row));
-    lines.push("  └ " + shortLine(row.summary, 180));
-    if (row.decision) lines.push("  ⚖️ 결정: " + row.decision);
-    if (row.source) lines.push("  📎 근거: " + row.source);
+function subTasks(text) {
+  const found = [];
+  for (const sub of NEXUS_SUBS) {
+    if (String(text || "").indexOf(sub) !== -1 && found.indexOf(sub) === -1) found.push(sub);
   }
-  const first = rows[0];
-  const latest = rows[rows.length - 1];
-  lines.push("═══════════════");
-  lines.push("🔍 경과: " + shortLine(first.summary, 80) + " → " + shortLine(latest.summary, 80));
-  lines.push("📌 현재: " + shortLine(latest.summary, 120));
+  return found;
+}
+
+function formatGroup(project, rows) {
+  const latest = rows[rows.length - 1] || {};
+  const lines = ["[<b>" + displayProjectName(project) + "</b>] 염성진 총괄 · TF 6/1"];
+  for (const row of rows) {
+    lines.push("• " + shortLine(row.summary, 190) + " (" + dateText(row) + ")");
+    for (const sub of subTasks(row.summary)) {
+      lines.push("  └ " + sub + " — " + shortLine(row.summary, 90));
+    }
+  }
+  if (rows.length > 1) lines.push("  └ 최신: " + shortLine(latest.summary, 120));
   return lines.join("\n");
+}
+
+async function sendLongMessage(env, chatId, text) {
+  const limit = 3500;
+  const parts = [];
+  let rest = String(text || "");
+  while (rest.length > limit) {
+    let cut = rest.lastIndexOf("\n\n", limit);
+    if (cut < 1000) cut = rest.lastIndexOf("\n", limit);
+    if (cut < 1000) cut = limit;
+    parts.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) parts.push(rest);
+  for (const part of parts) await sendMessage(env, chatId, part);
 }
 
 export async function runProjectBriefing(env, chatId, days, name) {
-  if (name) {
-    const timeline = await getProjectTimeline(env, name);
-    if (!timeline.length) {
-      if (chatId) await sendMessage(env, chatId, "최근 정리할 프로젝트 현황이 없습니다.");
-      return;
-    }
-    return sendMessage(env, chatId, formatProjectTimeline(name, timeline));
-  }
-
-  const rows = await getInsightsSince(env, sinceDaysIso(days || 7), {});
-  let proj = (rows || []).filter(function (r) { return r.project && r.project !== "기타"; });
-  if (!proj.length) {
-    if (chatId) await sendMessage(env, chatId, "최근 정리할 프로젝트 현황이 없습니다.");
+  const rows = await getProjectTimeline(env, name || "");
+  const filtered = (rows || []).filter(function (r) { return r.project; });
+  if (!filtered.length) {
+    if (chatId) await sendMessage(env, chatId, "최근 정리된 프로젝트 현황이 없습니다.");
     return;
   }
-  const digest = proj.map(function (r) {
-    return "[" + r.project + "] " + r.summary +
-      (r.schedule ? " / " + r.schedule : "") +
-      (r.people ? " (" + r.people + ")" : "") +
-      (r.followup ? " (후속:" + r.followup + ")" : "") +
-      (r.done ? " (완료)" : "");
-  }).join("\n");
-  const out = await callClaude(env, "프로젝트 항목:\n" + digest, PROJECT_SYSTEM, MODEL_SMART, 2000);
+
+  const groups = {};
+  for (const row of filtered) {
+    const key = normalizeProjectName(row.project);
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(row);
+  }
+
+  const lines = ["📂 프로젝트", "═══"];
+  for (const key of Object.keys(groups).sort()) {
+    lines.push(formatGroup(key, groups[key]));
+  }
+  lines.push("═══");
+  lines.push("ℹ️ 대외정보 /info · 핵심 /brief");
+
+  const out = lines.join("\n");
   if (chatId) {
-    await sendMessage(env, chatId, out);
+    await sendLongMessage(env, chatId, out);
   } else {
     const targets = String(env.BRIEFING_TARGET_ID || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
-    for (const id of targets) await sendMessage(env, id, out);
+    for (const id of targets) await sendLongMessage(env, id, out);
   }
 }

@@ -109,7 +109,13 @@ export async function getInsightsSince(env, sinceIso, filter) {
   let where = "created_at >= ?";
   const binds = [sinceIso];
   if (filter && filter.category) { where += " AND category = ?"; binds.push(filter.category); }
+  if (filter && filter.categoryIn && filter.categoryIn.length) {
+    where += " AND category IN (" + filter.categoryIn.map(function () { return "?"; }).join(",") + ")";
+    binds.push(...filter.categoryIn);
+  }
   if (filter && filter.project)  { where += " AND project = ?";  binds.push(filter.project); }
+  if (filter && filter.projectEmpty) { where += " AND (project = '' OR project IS NULL)"; }
+  if (filter && filter.projectNotEmpty) { where += " AND project != '' AND project IS NOT NULL"; }
   if (filter && filter.sourceType) { where += " AND source_type = ?"; binds.push(filter.sourceType); }
   if (filter && filter.hasSchedule) { where += " AND schedule != ''"; }
   const { results } = await env.DB.prepare(
@@ -119,11 +125,16 @@ export async function getInsightsSince(env, sinceIso, filter) {
 }
 
 export async function getProjectTimeline(env, project) {
+  const name = String(project || "").trim();
+  const where = name
+    ? "i.project != '' AND i.project IS NOT NULL AND i.project LIKE ?"
+    : "i.project != '' AND i.project IS NOT NULL";
+  const binds = name ? ["%" + name + "%"] : [];
   const { results } = await env.DB.prepare(
-    "SELECT i.schedule, i.project, i.summary, i.people, i.sender, i.decision, i.source, i.created_at, " +
+    "SELECT i.schedule, i.project, i.summary, i.people, i.sender, i.created_at, " +
     "(SELECT filename FROM files f WHERE f.file_id = i.source_ref ORDER BY id DESC LIMIT 1) AS filename " +
-    "FROM insights i WHERE i.project LIKE ? ORDER BY i.created_at ASC LIMIT 50"
-  ).bind("%" + String(project || "").trim() + "%").all();
+    "FROM insights i WHERE " + where + " ORDER BY lower(i.project), i.created_at ASC LIMIT 50"
+  ).bind(...binds).all();
   return results || [];
 }
 
