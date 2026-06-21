@@ -46,7 +46,7 @@ export async function maybeExtractEngagement(env, msg, text) {
     }
   } catch (e) {
     console.error("contact match error", e && e.message);
-    return null;
+    contactId = null;
   }
 
   // insert engagement

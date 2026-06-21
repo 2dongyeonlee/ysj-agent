@@ -28,7 +28,11 @@ export async function collectMessage(env, msg) {
       text: text,
     });
     // auto-extract "who was met" into engagements (cheap keyword filter inside)
-    await maybeExtractEngagement(env, msg, text);
+    try {
+      await maybeExtractEngagement(env, msg, text);
+    } catch (e) {
+      console.error("maybeExtractEngagement isolated error", e && e.message);
+    }
     if (text.length >= 20 && INSIGHT_SIGNAL.test(text)) {
       await extractInsight(env, {
         chatId: msg.chat.id,
