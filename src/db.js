@@ -124,6 +124,17 @@ export async function getInsightsSince(env, sinceIso, filter) {
   return results || [];
 }
 
+export async function getInfoInsightsSince(env, sinceIso, categories) {
+  const list = (categories && categories.length) ? categories : ["정부", "국회", "BH", "글로벌", "언론"];
+  const ph = list.map(function () { return "?"; }).join(",");
+  const { results } = await env.DB.prepare(
+    "SELECT source_type, schedule, category, project, summary, people, author, report_date, sender, created_at, source_ref " +
+    "FROM insights WHERE created_at >= ? AND category IN (" + ph + ") AND (project = '' OR project IS NULL) " +
+    "ORDER BY created_at DESC LIMIT 100"
+  ).bind(sinceIso, ...list).all();
+  return results || [];
+}
+
 export async function getProjectTimeline(env, project) {
   const name = String(project || "").trim();
   const where = name

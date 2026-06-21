@@ -1,6 +1,6 @@
 // info.js - external-affairs briefing from categorized insights.
 
-import { getInsightsSince } from "./db.js";
+import { getInfoInsightsSince } from "./db.js";
 import { sendMessage } from "./telegram.js";
 
 const INFO_CATEGORIES = [
@@ -81,10 +81,7 @@ async function sendLongMessage(env, chatId, text) {
 }
 
 export async function runInfoBriefing(env, chatId, days) {
-  const rows = await getInsightsSince(env, sinceDaysIso(days || 14), {
-    categoryIn: INFO_CATEGORIES.map(function (c) { return c.name; }),
-    projectEmpty: true,
-  });
+  const rows = await getInfoInsightsSince(env, sinceDaysIso(days || 14), INFO_CATEGORIES.map(function (c) { return c.name; }));
   const items = (rows || []).filter(function (r) { return r.category && r.summary; }).sort(sortByIssueDate);
   if (!items.length) {
     if (chatId) await sendMessage(env, chatId, "최근 정리된 대외정보가 없습니다.");
