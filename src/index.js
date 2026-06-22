@@ -11,21 +11,29 @@ import { sendMessage } from "./telegram.js";
 import { addProjectKeyword, listProjects, deleteProject } from "./db.js";
 import { runReclass } from "./reclass.js";
 
-// 권한자 텔레그램 username (앞의 @ 제외). 동연 username 으로 교체 필요.
-// env.ADMIN_USERNAMES (쉼표구분) 가 있으면 함께 허용.
+// 권한자 인식. (1) chat_id 기반: ADMIN_CHAT_ID 또는 BRIEFING_TARGET_ID 채팅 — @username
+// 미설정 단말에서도 동작(권장). (2) ADMIN_USERNAMES @username 기반(보조).
 const ALLOWED_ADMINS = ["CHANGE_ME"];
 
-function adminList(env) {
-  const fromEnv = String((env && env.ADMIN_USERNAMES) || "")
-    .split(",").map(function (s) { return s.trim().replace(/^@/, "").toLowerCase(); }).filter(Boolean);
+function csv(value) {
+  return String(value || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+}
+
+function adminUsernames(env) {
+  const fromEnv = csv((env && env.ADMIN_USERNAMES) || "").map(function (s) { return s.replace(/^@/, "").toLowerCase(); });
   const fromCode = ALLOWED_ADMINS.map(function (s) { return String(s).trim().replace(/^@/, "").toLowerCase(); }).filter(Boolean);
   return fromEnv.concat(fromCode);
 }
 
+function adminChatIds(env) {
+  return csv((env && env.ADMIN_CHAT_ID) || "").concat(csv((env && env.BRIEFING_TARGET_ID) || ""));
+}
+
 function isAdmin(env, msg) {
+  const chatId = String((msg.chat && msg.chat.id) || "");
+  if (chatId && adminChatIds(env).indexOf(chatId) !== -1) return true;
   const uname = String((msg.from && msg.from.username) || "").toLowerCase();
-  if (!uname) return false;
-  return adminList(env).indexOf(uname) !== -1;
+  return !!uname && adminUsernames(env).indexOf(uname) !== -1;
 }
 
 // 텔레그램 file_id → 다운로드 URL (R2 이관용). collect.js 의 동일 헬퍼.
@@ -87,9 +95,23 @@ async function route(env, msg) {
   // ---- commands (ASCII only). arg = text after the command ----
   if (text === "/help" || text === "/start") return sendMessage(env, chatId, HELP);
 
+  // 내 chat_id·관리자 여부 확인 (권한 설정용). 누구나 사용 가능.
+  if (text === "/whoami") {
+    const uname = (msg.from && msg.from.username) ? "@" + msg.from.username : "(없음)";
+    const ok = isAdmin(env, msg);
+    return sendMessage(env, chatId,
+      "🪪 <b>내 정보</b>\n" +
+      "• chat_id: <code>" + chatId + "</code>\n" +
+      "• username: " + uname + "\n" +
+      "• 관리자 인식: " + (ok ? "예 ✅" : "아니오 ❌") +
+      (ok ? "" :
+        "\n\n관리자로 쓰려면 Cloudflare 대시보드 → Workers → ysj-agent → Settings → Variables 에\n" +
+        "<code>ADMIN_CHAT_ID = " + chatId + "</code>\n추가 후 저장하세요(재배포 불필요)."));
+  }
+
   // 기존 파일 일괄 이관 (권한자만): r2_key 빈 행을 R2 로 옮긴다.
   if (text === "/migrate") {
-    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다.");
+    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다. /whoami 로 chat_id 확인 후 ADMIN_CHAT_ID 에 등록하세요.");
     const { results } = await env.DB.prepare(
       "SELECT id, file_id, filename FROM files WHERE (r2_key = '' OR r2_key IS NULL) AND file_id != '' LIMIT 50"
     ).all();
@@ -115,13 +137,13 @@ async function route(env, msg) {
 
   // 기존 적재 파일 재분류 (권한자만): 저장된 텍스트로 다시 분류해 R2 폴더 이동.
   if (text === "/reclass" || text.startsWith("/reclass ")) {
-    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다.");
+    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다. /whoami 로 chat_id 확인 후 ADMIN_CHAT_ID 에 등록하세요.");
     return runReclass(env, chatId, text.indexOf("reset") !== -1);
   }
 
   // 프로젝트 키워드 관리 (권한자만)
   if (text.startsWith("/addproject")) {
-    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다.");
+    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다. /whoami 로 chat_id 확인 후 ADMIN_CHAT_ID 에 등록하세요.");
     const arg = text.replace("/addproject", "").trim();
     let project = "", kwPart = "";
     if (arg.indexOf("|") !== -1) {
@@ -147,7 +169,7 @@ async function route(env, msg) {
     return sendMessage(env, chatId, "📑 <b>프로젝트 키워드</b>\n\n" + body);
   }
   if (text.startsWith("/delproject")) {
-    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다.");
+    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다. /whoami 로 chat_id 확인 후 ADMIN_CHAT_ID 에 등록하세요.");
     const name = text.replace("/delproject", "").trim();
     if (!name) return sendMessage(env, chatId, "형식: /delproject 프로젝트");
     const n = await deleteProject(env, name);
