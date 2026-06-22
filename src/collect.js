@@ -1,6 +1,6 @@
 // collect.js — silently collect messages/files. entry for briefing/search/extract.
 import { saveMessage, saveFile, priorIdenticalMessage } from "./db.js";
-import { senderName } from "./telegram.js";
+import { senderName, senderId } from "./telegram.js";
 import { sinceDaysIso } from "./utils.js";
 import { maybeExtractEngagement } from "./extract.js";
 import { extractInsight, captionProject, loadProjectKeywords } from "./insight.js";
@@ -206,11 +206,12 @@ export async function collectMessage(env, msg) {
       console.error("dedup check isolated error", e && e.message);
     }
 
-    if (!dupBody && bodyText.length >= 20 && INSIGHT_SIGNAL.test(bodyText)) {
+    if (!dupBody && bodyText.length >= 20) {
       const baseIns = {
         chatId: msg.chat.id,
         sourceType: "message",
         sender: effSender,
+        senderId: senderId(msg),
         caption: msg.caption || "",
         filename: (msg.document && msg.document.file_name) || "",
         receivedAt: msg.date ? new Date(msg.date * 1000) : new Date(),
