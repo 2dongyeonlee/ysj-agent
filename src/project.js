@@ -69,7 +69,7 @@ function progressLine(rows) {
 
 function formatItem(tag, row, brief) {
   const limit = brief ? 72 : 90;
-  return "  <b>" + tag + "</b> [" + issueDate(row) + "] " + oneLine(row.summary, limit) + senderTag(row);
+  return "  " + tag + " [" + issueDate(row) + "] " + oneLine(row.summary, limit) + senderTag(row);
 }
 
 function addMapEntry(map, tag, row) {
@@ -85,7 +85,7 @@ function addMapEntry(map, tag, row) {
 function formatOverviewGroup(groupNo, project, rows, map) {
   const sorted = rows.slice().sort(sortRows);
   const shown = recentRows(sorted, 2);
-  const lines = [groupNo + ". 📂 [<b>" + displayProjectName(project) + "</b>]"];
+  const lines = [groupNo + ". <b>" + displayProjectName(project) + "</b>"];
   let itemNo = 0;
   for (const row of shown) {
     itemNo++;
@@ -102,7 +102,7 @@ function formatOverviewGroup(groupNo, project, rows, map) {
 
 function formatFullGroup(groupNo, project, rows, map) {
   const sorted = rows.slice().sort(sortRows);
-  const lines = [groupNo + ". 📂 [<b>" + displayProjectName(project) + "</b>] · 전체 " + sorted.length + "건", ""];
+  const lines = [groupNo + ". <b>" + displayProjectName(project) + "</b> · 전체 " + sorted.length + "건", ""];
   let itemNo = 0;
   for (const row of sorted) {
     itemNo++;
