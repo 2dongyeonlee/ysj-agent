@@ -7,7 +7,7 @@ import { runInfoBriefing } from "./info.js";
 import { runProjectBriefing } from "./project.js";
 import { handleVoice } from "./voice.js";
 import { classifyIntent } from "./intent.js";
-import { sendMessage } from "./telegram.js";
+import { sendMessage, sendDocument, sendDocumentBytes } from "./telegram.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks } from "./db.js";
 import { runReclass } from "./reclass.js";
@@ -288,7 +288,28 @@ async function route(env, msg) {
   }
 }
 
-// /project 번호 항목(예: 1-1)의 원본 자료 링크 + 상세 요약 제공.
+// 원본 파일 전송: file_id 재전송 우선 → 실패 시 R2 원본 바이트 업로드.
+async function sendItemFile(env, chatId, item, fileInfo, caption) {
+  if (item.ref) {
+    try {
+      const r = await sendDocument(env, chatId, item.ref, caption);
+      if (r && r.ok) return true;
+    } catch (e) { console.error("sendItemFile file_id", e && e.message); }
+  }
+  if (fileInfo && fileInfo.r2_key && env.R2) {
+    try {
+      const obj = await env.R2.get(fileInfo.r2_key);
+      if (obj) {
+        const buf = await obj.arrayBuffer();
+        const r = await sendDocumentBytes(env, chatId, buf, fileInfo.filename || "자료", caption);
+        if (r && r.ok) return true;
+      }
+    } catch (e) { console.error("sendItemFile R2", e && e.message); }
+  }
+  return false;
+}
+
+// /project 번호 항목(예: 1-1)의 원본 자료 전송 + 압축 요약 제공.
 async function handleProjectItem(env, chatId, tag, item, want) {
   let fileInfo = null;
   if (item.ref) {
@@ -300,34 +321,36 @@ async function handleProjectItem(env, chatId, tag, item, want) {
     } catch (e) { console.error("item file lookup", e && e.message); }
   }
 
-  const parts = ["📌 <b>" + tag + "</b> · " + (item.project || "") + " (" + item.date + ")"];
+  const header = "📌 <b>" + tag + "</b> · " + (item.project || "") + " (" + item.date + ")";
 
+  // 자료: 원본 파일을 실제로 전송
   if (want === "자료" || want === "둘다") {
-    if (fileInfo && fileInfo.filename) {
-      parts.push("📎 자료: " + fileInfo.filename + (fileInfo.r2_key ? "\n   (R2: " + fileInfo.r2_key + ")" : ""));
-    } else {
-      parts.push("📎 연결된 원본 파일 없음 (메시지 기반 항목)");
+    const cap = header + (fileInfo && fileInfo.filename ? "\n📎 " + fileInfo.filename : "");
+    const ok = await sendItemFile(env, chatId, item, fileInfo, cap);
+    if (!ok) {
+      await sendMessage(env, chatId, header + "\n📎 원본 파일을 전송할 수 없습니다" +
+        (fileInfo && fileInfo.filename ? " (" + fileInfo.filename + ")" : " — 메시지 기반 항목이라 첨부 원본이 없습니다") + ".");
     }
   }
 
+  // 요약: 원문을 압축 요약
   if (want === "요약" || want === "상세" || want === "둘다") {
     const base = String((fileInfo && fileInfo.text) ? fileInfo.text : (item.summary || "")).trim();
     if (!base) {
-      parts.push("\n(요약할 원문이 없습니다.)");
+      await sendMessage(env, chatId, header + "\n(요약할 원문이 없습니다.)");
     } else {
       const sys = "다음 자료를 염성진 사장 보고용으로 '요약'하라. 원문을 그대로 옮기거나 표를 복사하지 말고 핵심만 압축하라.\n" +
         "- 맨 위 한 줄로 결론. 이어서 핵심 포인트 3~6개를 '• '로 짧게.\n" +
         "- 마크다운(표 |---|, #, **, -) 절대 금지. 강조는 <b></b>만. 불릿은 '• '.\n" +
         "- 숫자·날짜·금액·고유명사는 정확히 유지. 없는 내용은 지어내지 말 것.\n" +
         "- 결정·후속 사항이 있으면 마지막에 '결정/후속:' 한두 줄.";
+      let detail;
       try {
-        const detail = await callClaude(env, "자료:\n" + base.slice(0, 12000), sys, MODEL_SMART, 900);
-        parts.push("\n" + detail);
+        detail = await callClaude(env, "자료:\n" + base.slice(0, 12000), sys, MODEL_SMART, 900);
       } catch (e) {
-        parts.push("\n(요약 생성 실패) 원문 요지: " + String(item.summary || "").slice(0, 500));
+        detail = "(요약 생성 실패) 원문 요지: " + String(item.summary || "").slice(0, 500);
       }
+      await sendMessage(env, chatId, header + "\n" + detail);
     }
   }
-
-  return sendMessage(env, chatId, parts.join("\n"));
 }

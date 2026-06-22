@@ -50,6 +50,16 @@ export async function sendDocument(env, chatId, fileId, caption = "") {
   return res.json().catch(() => ({}));
 }
 
+// 바이트(R2 원본 등)를 문서로 업로드 전송. file_id 재전송이 안 될 때 폴백.
+export async function sendDocumentBytes(env, chatId, bytes, filename, caption = "") {
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  if (caption) form.append("caption", caption.slice(0, 1000));
+  form.append("document", new Blob([bytes]), filename || "file");
+  const res = await fetch(`${apiBase(env)}/sendDocument`, { method: "POST", body: form });
+  return res.json().catch(() => ({}));
+}
+
 export function senderName(msg) {
   const f = (msg && msg.from) || {};
   return [f.first_name, f.last_name].filter(Boolean).join(" ") || f.username || "익명";
