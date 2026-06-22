@@ -280,6 +280,9 @@ async function route(env, msg) {
     return runProjectBriefing(env, chatId, days, name);
   }
   if (text.startsWith("/summary")) {
+    // 녹음이 함께 왔거나 reply 대상이 녹음이면 → 회의록 요약(handleVoice)로.
+    if (isAudioMsg(msg)) { await collectMessage(env, msg); return handleVoice(env, chatId, msg, true); }
+    if (isAudioMsg(msg.reply_to_message)) return handleVoice(env, chatId, msg.reply_to_message, true);
     const kw = text.replace("/summary", "").trim();
     return summarizeLatest(env, chatId, kw);
   }
@@ -289,19 +292,35 @@ async function route(env, msg) {
     return handleQA(env, chatId, q);
   }
 
+  // 오디오(녹음) 판별 — 현재 메시지 또는 reply 대상이 녹음인지.
+  function isAudioMsg(m) {
+    if (!m) return false;
+    return !!(m.voice || m.audio
+      || (m.document && (/audio/i.test(m.document.mime_type || "")
+          || /\.(ogg|oga|mp3|m4a|wav|aac|opus|flac|amr)$/i.test(m.document.file_name || ""))));
+  }
+  const selfAudio = isAudioMsg(msg);
+  const repliedAudio = isAudioMsg(msg.reply_to_message);
+
   // ---- silent collection (no auto-reply) ----
   await collectMessage(env, msg);
 
-  if (msg.voice || msg.audio || (msg.document && (/audio/i.test(msg.document.mime_type || "") || /\.(ogg|oga|mp3|m4a|wav|aac|opus|flac|amr)$/i.test(msg.document.file_name || "")))) {
+  if (selfAudio) {
     const mentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
-    // DM(1:1)이면 녹음 즉시 리치 요약 응답. 그룹은 멘션 시에만.
-    await handleVoice(env, chatId, msg, mentioned || msg.chat.type === "private");
+    // DM·멘션·또는 캡션에 요약/정리/회의록 의도가 있으면 즉시 회의록 요약.
+    const want = mentioned || msg.chat.type === "private" || /요약|정리|회의록|summary/i.test(text);
+    await handleVoice(env, chatId, msg, want);
     return;
   }
   if (msg.document || (msg.photo && msg.photo.length)) {
     const mentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
     await summarizeFile(env, chatId, msg, mentioned);
     return;
+  }
+
+  // reply 대상이 녹음이고, 사용자가 요약/정리를 요청하면 → 그 녹음을 회의록 요약.
+  if (repliedAudio && /요약|정리|회의록|summary/i.test(text)) {
+    return handleVoice(env, chatId, msg.reply_to_message, true);
   }
 
   // text: groups need mention; 1:1 uses natural-language intent classification.
@@ -318,7 +337,9 @@ async function route(env, msg) {
   if ((isDM && text) || isMentioned) {
     const { intent, target } = await classifyIntent(env, cleanText);
     switch (intent) {
-      case "summary":  return summarizeLatest(env, chatId, target);
+      case "summary":
+        if (repliedAudio) return handleVoice(env, chatId, msg.reply_to_message, true);
+        return summarizeLatest(env, chatId, target);
       case "project":  return runProjectBriefing(env, chatId, 7, target);
       case "decision": return runBrief(env, chatId);
       case "info":     return runInfoBriefing(env, chatId, 2);
