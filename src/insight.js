@@ -11,8 +11,9 @@ JSON만 반환하라. 마크다운 금지.
 
 [분류 규칙]
 1. 자료 성격을 먼저 판정:
-   - 프로젝트 추진 문서(nexus 등) → project=프로젝트명, category 비움
-   - 대외정보(외부 정세·대면 활동) → category=5개 중 하나, project 비움
+   - 아래 [등록된 프로젝트] 중 하나에 관한 자료 → project=그 프로젝트명, category 비움
+     (키워드가 정확히 안 보여도 내용 맥락이 그 프로젝트면 그 프로젝트로 분류한다)
+   - 어느 프로젝트에도 안 맞는 대외정보(외부 정세·대면 활동) → category=5개 중 하나, project 비움
    - 내부 보고/운영계획(O/I 등) → category·project 모두 비움
 2. category는 5개만(그 외·임의생성 금지): 정부 / 국회 / BH / 글로벌 / 언론
    - "정책"·"언론PR" 쓰지 말 것 → 정부·언론으로.
@@ -32,6 +33,26 @@ decision·followup 컬럼은 사용하지 않는다. 결정사항은 summary에 
   "summary": "30자 이내 핵심 1줄. 불릿(•)·이모지·📋·📌·제목 형식 금지. 완성된 짧은 서술문으로.",
   "people": "관련 인물/소속. 없으면 빈 문자열"
 }`;
+
+// 등록된 프로젝트 목록을 LLM 프롬프트용 힌트로. 프로젝트명 + 키워드 예시.
+// 분류기가 사용자의 프로젝트를 맥락으로 인식하게 한다(키워드 정확 일치 없어도).
+export function projectHints(keywords) {
+  if (!keywords || !keywords.length) return "";
+  const map = {};
+  for (const r of keywords) {
+    const p = normalizeProject(r.project);
+    if (!p) continue;
+    if (!map[p]) map[p] = [];
+    if (r.keyword && map[p].indexOf(r.keyword) === -1) map[p].push(r.keyword);
+  }
+  const names = Object.keys(map);
+  if (!names.length) return "";
+  const lines = names.map(function (p) {
+    const ex = map[p].slice(0, 6);
+    return "- " + p + (ex.length ? " (예: " + ex.join(", ") + ")" : "");
+  });
+  return "\n\n[등록된 프로젝트]\n" + lines.join("\n");
+}
 
 export async function loadProjectKeywords(env) {
   try {
@@ -214,7 +235,7 @@ export async function classifyStored(env, { text, filename, caption }) {
   if (body.length < 10) return { project: "", category: "" };
   let parsed;
   try {
-    const raw = await callClaude(env, "내용:\n" + body.slice(0, 4000), EXTRACT_SYSTEM, MODEL_FAST, 500);
+    const raw = await callClaude(env, "내용:\n" + body.slice(0, 4000), EXTRACT_SYSTEM + projectHints(keywords), MODEL_FAST, 500);
     parsed = JSON.parse(cleanJson(raw));
   } catch (e) {
     console.error("classifyStored parse error", e && e.message);
@@ -236,7 +257,9 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
     const cap = String(caption || "").trim();
     const fname = String(filename || "").trim();
 
-    const raw = await callClaude(env, "내용:\n" + readText, EXTRACT_SYSTEM, MODEL_FAST, 500);
+    // 등록 프로젝트 목록을 프롬프트에 주입해 LLM 이 맥락으로 프로젝트를 인식하게 한다.
+    const keywords = await loadProjectKeywords(env);
+    const raw = await callClaude(env, "내용:\n" + readText, EXTRACT_SYSTEM + projectHints(keywords), MODEL_FAST, 500);
     let parsed;
     try {
       parsed = JSON.parse(cleanJson(raw));
@@ -246,7 +269,6 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
     }
 
     const matchText = cap + " " + fname + " " + body;
-    const keywords = await loadProjectKeywords(env);
     const matchedProjects = keywords ? matchProjects(keywords, cap, fname, body) : [];
     const llmProject = normalizeProject(parsed.project);
     const projects = matchedProjects.length ? matchedProjects : (llmProject ? [llmProject] : []);
