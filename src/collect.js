@@ -53,6 +53,28 @@ export function buildR2Key(meta) {
   return `${folder}/${date}_${title}_${who}${ext}`;
 }
 
+// 다항목 브리핑 분리: 줄머리가 [제목] 인 섹션이 2개 이상이면 섹션별 배열로 쪼갠다. 아니면 null.
+// 각 섹션에 브리핑 상단 날짜(m/d)를 prefix 해 일자 정렬이 되게 한다.
+function splitBriefingSections(text) {
+  const body = String(text || "");
+  const re = /^[ \t]*\[[^\]\n]{1,40}\]/gm;
+  const idxs = [];
+  let m;
+  while ((m = re.exec(body)) !== null) idxs.push(m.index);
+  if (idxs.length < 2) return null;
+  const dateHint = (body.slice(0, idxs[0]).match(/\d{1,2}\/\d{1,2}/) || body.match(/\d{1,2}\/\d{1,2}/) || [""])[0];
+  const out = [];
+  for (let i = 0; i < idxs.length; i++) {
+    const start = idxs[i];
+    const end = i + 1 < idxs.length ? idxs[i + 1] : body.length;
+    let chunk = body.slice(start, end).trim();
+    if (chunk.length < 20) continue;
+    if (dateHint && !/\d{1,2}\/\d{1,2}/.test(chunk.slice(0, 40))) chunk = dateHint + " " + chunk;
+    out.push(chunk);
+  }
+  return out.length >= 2 ? out : null;
+}
+
 export async function collectMessage(env, msg) {
   const text = (msg.text || msg.caption || "").trim();
   const sender = senderName(msg);
@@ -162,16 +184,29 @@ export async function collectMessage(env, msg) {
       console.error("maybeExtractEngagement isolated error", e && e.message);
     }
     if (text.length >= 20 && INSIGHT_SIGNAL.test(text)) {
-      await extractInsight(env, {
+      const baseIns = {
         chatId: msg.chat.id,
         sourceType: "message",
-        sourceRef: String(msg.message_id),
-        text,
         sender,
         caption: msg.caption || "",
         filename: (msg.document && msg.document.file_name) || "",
         receivedAt: msg.date ? new Date(msg.date * 1000) : new Date(),
-      });
+      };
+      // 다항목 브리핑([제목] 섹션 2개 이상)은 섹션별로 분리 저장 → /info 에 각각 노출.
+      const sections = splitBriefingSections(text);
+      if (sections) {
+        for (let i = 0; i < sections.length; i++) {
+          await extractInsight(env, Object.assign({}, baseIns, {
+            sourceRef: String(msg.message_id) + "#" + (i + 1),
+            text: sections[i],
+          }));
+        }
+      } else {
+        await extractInsight(env, Object.assign({}, baseIns, {
+          sourceRef: String(msg.message_id),
+          text,
+        }));
+      }
     }
   }
 }
