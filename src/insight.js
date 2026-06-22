@@ -176,6 +176,25 @@ export function normalizeCategory(value) {
   return "";
 }
 
+const INFO_KEYWORD_RULES = [
+  { category: "BH", re: /BH|대통령실|대통령|국정상황실|정무수석|비서실장|수석비서관|총리|인선/ },
+  { category: "언론", re: /언론|기사|보도|취재|기자|인터뷰|PR|홍보|광고|방송|유튜브|타임스퀘어|CNBC|블룸버그TV|로이터|워싱턴포스트|중앙일보|조선일보|미디어/ },
+  { category: "글로벌", re: /글로벌|해외|외신|미국|중국|일본|대만|EU|유럽|워싱턴|뉴욕|통상|관세|수출규제|상무부|ASML|NVIDIA|Microsoft|AWS|Anthropic|Micron|CXMT|UNEP|GGGI|나스닥|ADR/ },
+  { category: "국회", re: /국회|의원실|국회의원|상임위|법안|정당|민주당|국민의힘|정책위의장|입법|보좌관|국회법/ },
+  { category: "정부", re: /정부|장관|차관|부처|산업부|산업통상자원부|고용노동부|고용부|기후부|환경부|공정위|공정거래위원회|과기부|국토부|교육부|규제기관|인수위|도지사|시장|산단|클러스터|정책|규제/ },
+];
+
+export function classifyInfoCategory(text, fallback) {
+  const normalized = normalizeCategory(fallback);
+  if (normalized && normalized !== "기타" && normalized !== "내부") return normalized;
+  const body = String(text || "");
+  if (/O\/I|OI|티미팅|회의체|위클리|내부 보고|운영계획|조직문화|Comm\.?\s*위|커뮤니케이션총괄/.test(body)) return "내부";
+  for (const rule of INFO_KEYWORD_RULES) {
+    if (rule.re.test(body)) return rule.category;
+  }
+  return normalized || "기타";
+}
+
 export function normalizeProject(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -257,7 +276,7 @@ export async function classifyStored(env, { text, filename, caption }) {
   const isProject = !!llmProject || String(parsed.kind || "").trim() === "project";
   return {
     project: isProject ? llmProject : "",
-    category: isProject ? "" : normalizeCategory(parsed.category),
+    category: isProject ? "" : classifyInfoCategory(body, parsed.category),
   };
 }
 
@@ -295,7 +314,7 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
     const kind = String(parsed.kind || "").trim();
     const isProject = projects.length || kind === "project";
     // project면 category 공란(프로젝트로 분류됨), 아니면 반드시 7개 중 하나 — 비면 "기타".
-    const category = isProject ? "" : (normalizeCategory(parsed.category) || "기타");
+    const category = isProject ? "" : classifyInfoCategory(matchText, parsed.category);
     const project = isProject ? (projects[0] || llmProject) : "";
     // 머리표("[보고요망]" 등)를 summary 본문에 박지 않는다. 긴급 표시가 필요하면 출력단에서 처리.
     let summary = String(parsed.summary || "").trim()

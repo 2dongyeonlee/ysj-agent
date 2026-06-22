@@ -4,7 +4,7 @@ import { extractText } from "./docparse.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
-import { loadProjectKeywords, matchProjects, detectDone, detectUrgent, normalizeCategory, normalizeProject, parseInfoMeta } from "./insight.js";
+import { loadProjectKeywords, matchProjects, detectDone, detectUrgent, classifyInfoCategory, normalizeProject, parseInfoMeta } from "./insight.js";
 import { updateInsightDone } from "./db.js";
 
 const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" + `문서를 읽고 JSON만 반환하라. 마크다운 금지.
@@ -81,7 +81,7 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
     if (!projects.length && llmProject) projects = [llmProject];
 
     const project = projects[0] || "";
-    const category = project ? "" : normalizeCategory(parsed.category);
+    const category = project ? "" : classifyInfoCategory(matchText, parsed.category);
     const urgent = detectUrgent(matchText);
     const summary = ((urgent ? "[보고요망] " : "") + plain).slice(0, 500);
 
