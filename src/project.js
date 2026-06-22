@@ -2,71 +2,11 @@
 
 import { getProjectTimeline, getSubtasks } from "./db.js";
 import { sendMessage } from "./telegram.js";
+import { stripHtml, oneLine, issueDate, sortByIssueDate, senderTag } from "./utils.js";
 
 // 하위과제는 DB(project_subtasks)에서 프로젝트별로 조회 (하드코딩 제거)
+// 공통 요약·날짜·정렬 함수는 utils.js 단일 소스 사용.
 const SEPARATOR = "━━━━━━━━━";
-
-function stripHtml(text) {
-  return String(text || "").replace(/<\/?[a-zA-Z]+>/g, "").replace(/\s+/g, " ").trim();
-}
-
-// 글자수 컷 제거 — 첫 문장을 통째로 보존(말 끊김 방지). 요약 품질은 insight 저장 단계가 담당.
-function truncateWords(text) {
-  return String(text || "").trim();
-}
-
-function firstSentence(text) {
-  const cleaned = stripHtml(text)
-    .replace(/^📋\s*[^📌\n]+/u, "")
-    .replace(/^📄\s*[^🎯\n]+/u, "")
-    .replace(/📌\s*핵심\s*/g, "")
-    .replace(/🎯\s*핵심:\s*/g, "")
-    .replace(/\[(보고요망|보고|공유|참고|검토요망|검토)\]\s*/g, "")
-    .replace(/^[•\-]\s*/g, "")
-    .trim();
-  const bullet = cleaned.match(/(?:^|\s)•\s*([^•\n]+)/);
-  const source = bullet ? bullet[1].trim() : cleaned;
-  const sentence = source.split(/(?<=[.!?。]|다\.|임\.|음\.)\s+/u)[0] || source;
-  return sentence.trim();
-}
-
-function issueDate(row) {
-  const source = String(row.schedule || "") + "\n" + String(row.summary || "");
-  const full = source.match(/20\d{2}[-.년]\s*(\d{1,2})[-.월]\s*(\d{1,2})/);
-  if (full) {
-    const month = Number(full[1]);
-    const day = Number(full[2]);
-    return day > 0 ? month + "/" + day : month + "월";
-  }
-  const slash = source.match(/(\d{1,2})\/(\d{1,2})/);
-  if (slash) {
-    const month = Number(slash[1]);
-    const day = Number(slash[2]);
-    return day > 0 ? month + "/" + day : month + "월";
-  }
-  const dotted = source.match(/(\d{1,2})\.(\d{1,2})/);
-  if (dotted) {
-    const month = Number(dotted[1]);
-    const day = Number(dotted[2]);
-    return day > 0 ? month + "/" + day : month + "월";
-  }
-  const korean = source.match(/(\d{1,2})월\s*(\d{1,2})일/);
-  if (korean) return Number(korean[1]) + "/" + Number(korean[2]);
-  return "—";
-}
-
-function sortByIssueDate(a, b) {
-  return issueScore(a) - issueScore(b);
-}
-
-function issueScore(row) {
-  const text = issueDate(row);
-  if (text === "—") return 9999;
-  const parts = text.split("/");
-  const month = parseInt(parts[0], 10);
-  const day = parts[1] ? parseInt(parts[1], 10) : 15;
-  return month * 100 + day;
-}
 
 function normalizeProjectName(project) {
   const p = String(project || "").trim();
@@ -87,7 +27,7 @@ function subTasks(text, subList) {
 }
 
 function formatSubTask(sub, text) {
-  return "  └ " + sub + " — " + firstSentence(text);
+  return "  └ " + sub + " — " + oneLine(text);
 }
 
 function progressLine(rows) {
@@ -112,7 +52,7 @@ function formatGroup(project, rows, subList) {
   const sorted = rows.slice().sort(sortByIssueDate);
   const lines = ["📂 [<b>" + displayProjectName(project) + "</b>]"];
   for (const row of sorted) {
-    lines.push("• " + firstSentence(row.summary));
+    lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
     for (const sub of subTasks(row.summary, subList)) lines.push(formatSubTask(sub, row.summary));
   }
   const prog = progressLine(sorted);

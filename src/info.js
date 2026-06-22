@@ -2,6 +2,7 @@
 
 import { getInfoInsightsSince } from "./db.js";
 import { sendMessage } from "./telegram.js";
+import { oneLine, issueDate, sortByIssueDate, senderTag, peopleText } from "./utils.js";
 
 const INFO_CATEGORIES = [
   { name: "정부", icon: "🏢" },
@@ -20,76 +21,6 @@ function sinceDaysIso(days) {
 function todayText() {
   const d = new Date();
   return (d.getMonth() + 1) + "/" + d.getDate();
-}
-
-function stripHtml(text) {
-  return String(text || "").replace(/<\/?[a-zA-Z]+>/g, "").replace(/\s+/g, " ").trim();
-}
-
-function truncateWords(text, max) {
-  if (text.length <= max) return text;
-  const head = text.slice(0, max).trim();
-  const cut = head.lastIndexOf(" ");
-  return (cut > 20 ? head.slice(0, cut) : head).trim() + "…";
-}
-
-function firstSentence(text) {
-  const cleaned = stripHtml(text)
-    .replace(/^📋\s*[^📌\n]+/u, "")
-    .replace(/^📄\s*[^🎯\n]+/u, "")
-    .replace(/📌\s*핵심\s*/g, "")
-    .replace(/🎯\s*핵심:\s*/g, "")
-    .replace(/^[•\-]\s*/g, "")
-    .trim();
-  const bullet = cleaned.match(/(?:^|\s)•\s*([^•\n]+)/);
-  const source = bullet ? bullet[1].trim() : cleaned;
-  const sentence = source.split(/(?<=[.!?。]|다\.|임\.|음\.)\s+/u)[0] || source;
-  return truncateWords(sentence, 70);
-}
-
-function issueDate(row) {
-  const source = String(row.schedule || "") + "\n" + String(row.summary || "");
-  const full = source.match(/20\d{2}[-.년]\s*(\d{1,2})[-.월]\s*(\d{1,2})/);
-  if (full) {
-    const month = Number(full[1]);
-    const day = Number(full[2]);
-    return day > 0 ? month + "/" + day : month + "월";
-  }
-  const slash = source.match(/(\d{1,2})\/(\d{1,2})/);
-  if (slash) {
-    const month = Number(slash[1]);
-    const day = Number(slash[2]);
-    return day > 0 ? month + "/" + day : month + "월";
-  }
-  const dotted = source.match(/(\d{1,2})\.(\d{1,2})/);
-  if (dotted) {
-    const month = Number(dotted[1]);
-    const day = Number(dotted[2]);
-    return day > 0 ? month + "/" + day : month + "월";
-  }
-  const korean = source.match(/(\d{1,2})월\s*(\d{1,2})일/);
-  if (korean) return Number(korean[1]) + "/" + Number(korean[2]);
-  return "—";
-}
-
-function issueStamp(row) {
-  const date = issueDate(row);
-  const raw = String(row.sender || "").trim();
-  const sender = raw ? raw.split(/\s+/)[0] : "—";
-  return date + "·<b>" + sender + "</b>";
-}
-
-function sortByIssueDate(a, b) {
-  return issueScore(a) - issueScore(b);
-}
-
-function issueScore(row) {
-  const text = issueDate(row);
-  if (text === "—") return 9999;
-  const parts = text.split("/");
-  const month = parseInt(parts[0], 10);
-  const day = parts[1] ? parseInt(parts[1], 10) : 15;
-  return month * 100 + day;
 }
 
 async function sendLongMessage(env, chatId, text) {
@@ -121,7 +52,9 @@ export async function runInfoBriefing(env, chatId, days) {
     if (!grouped.length) continue;
     lines.push(cat.icon + " <b>" + cat.name + "</b>");
     for (const row of grouped) {
-      lines.push("• " + firstSentence(row.summary) + " (" + issueStamp(row) + ")");
+      const who = peopleText(row);
+      const head = who ? "<b>" + who + "</b> — " : "";
+      lines.push("• [" + issueDate(row) + "] " + head + oneLine(row.summary) + senderTag(row));
       lines.push("");
     }
   }

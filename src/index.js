@@ -214,7 +214,7 @@ async function route(env, msg) {
   if (text.startsWith("/decision")) return runBrief(env, chatId); // decision 은 /brief 로 통합
   if (text.startsWith("/info")) {
     const arg = text.replace("/info", "").trim();
-    const days = /^\d+$/.test(arg) ? parseInt(arg, 10) : 1;
+    const days = /^\d+$/.test(arg) ? parseInt(arg, 10) : 2; // 기본 전날+당일
     return runInfoBriefing(env, chatId, days);
   }
   if (text.startsWith("/project")) {
@@ -261,7 +261,7 @@ async function route(env, msg) {
       case "summary":  return summarizeLatest(env, chatId, target);
       case "project":  return runProjectBriefing(env, chatId, 7, target);
       case "decision": return runBrief(env, chatId);
-      case "info":     return runInfoBriefing(env, chatId, 1);
+      case "info":     return runInfoBriefing(env, chatId, 2);
       case "brief":    return runBrief(env, chatId);
       case "question": return handleQA(env, chatId, cleanText);
       default:

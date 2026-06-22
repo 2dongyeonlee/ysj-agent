@@ -4,6 +4,7 @@ import { getMessagesSince, getRecentEngagements, getInsightsSince } from "./db.j
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
+import { stripHtml, oneLine, issueDate, senderTag } from "./utils.js";
 
 const SEPARATOR = "━━━━━━━━━";
 const INFO_CATEGORIES = ["정부", "국회", "BH", "글로벌", "언론"];
@@ -33,56 +34,6 @@ function sinceDaysIso(days) {
 function todayText() {
   const d = new Date();
   return (d.getMonth() + 1) + "/" + d.getDate();
-}
-
-function stripHtml(text) {
-  return String(text || "").replace(/<\/?[a-zA-Z]+>/g, "").replace(/\s+/g, " ").trim();
-}
-
-function truncateWords(text, max) {
-  if (text.length <= max) return text;
-  const head = text.slice(0, max).trim();
-  const cut = head.lastIndexOf(" ");
-  return (cut > 20 ? head.slice(0, cut) : head).trim() + "…";
-}
-
-function oneLine(text, max = 70) {
-  const cleaned = stripHtml(text)
-    .replace(/^📋\s*[^📌\n]+/u, "")
-    .replace(/^📄\s*[^🎯\n]+/u, "")
-    .replace(/📌\s*핵심\s*/g, "")
-    .replace(/🎯\s*핵심:\s*/g, "")
-    .replace(/^[•\-]\s*/g, "")
-    .trim();
-  const bullet = cleaned.match(/(?:^|\s)•\s*([^•\n]+)/);
-  const source = bullet ? bullet[1].trim() : cleaned;
-  const sentence = source.split(/(?<=[.!?。]|다\.|임\.|음\.)\s+/u)[0] || source;
-  return truncateWords(sentence, max);
-}
-
-function issueDate(row) {
-  const source = String(row.schedule || "") + "\n" + String(row.summary || "");
-  const iso = source.match(/20\d{2}[-.년]\s*(\d{1,2})[-.월]\s*(\d{1,2})/);
-  if (iso) {
-    const month = Number(iso[1]);
-    const day = Number(iso[2]);
-    return day > 0 ? month + "/" + day : month + "월";
-  }
-  const slash = source.match(/(\d{1,2})\/(\d{1,2})/);
-  if (slash) {
-    const month = Number(slash[1]);
-    const day = Number(slash[2]);
-    return day > 0 ? month + "/" + day : month + "월";
-  }
-  const dotted = source.match(/(\d{1,2})\.(\d{1,2})/);
-  if (dotted) {
-    const month = Number(dotted[1]);
-    const day = Number(dotted[2]);
-    return day > 0 ? month + "/" + day : month + "월";
-  }
-  const korean = source.match(/(\d{1,2})월\s*(\d{1,2})일/);
-  if (korean) return Number(korean[1]) + "/" + Number(korean[2]);
-  return "—";
 }
 
 function issueScore(row) {
@@ -181,11 +132,11 @@ export async function runMorningBriefing(env, replyChatId) {
 export async function runBrief(env, chatId) {
   const INFO_CATS = ["정부", "국회", "BH", "글로벌", "언론"];
   // 대외정보 (category 있고 project 없는 것)
-  const infoRows = (await getInsightsSince(env, sinceDaysIso(7), { categoryIn: INFO_CATS, projectEmpty: true })) || [];
+  const infoRows = (await getInsightsSince(env, sinceDaysIso(2), { categoryIn: INFO_CATS, projectEmpty: true })) || [];
   // 프로젝트 (project 있는 것) — 결정·보고 건 소스
-  const projRows = (await getInsightsSince(env, sinceDaysIso(14), { projectNotEmpty: true })) || [];
+  const projRows = (await getInsightsSince(env, sinceDaysIso(2), { projectNotEmpty: true })) || [];
   // O/I 등 내부보고 (category 비움, project 비움)
-  const internalRows = ((await getInsightsSince(env, sinceDaysIso(14), { projectEmpty: true })) || [])
+  const internalRows = ((await getInsightsSince(env, sinceDaysIso(2), { projectEmpty: true })) || [])
     .filter(function(r) { return !r.category || !INFO_CATS.includes(r.category); });
 
   const allRows = [...infoRows, ...projRows, ...internalRows]
@@ -203,7 +154,7 @@ export async function runBrief(env, chatId) {
   lines.push("🚨 <b>결정·확인 필요</b>");
   if (decisions.length) {
     for (const row of decisions) {
-      lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary));
+      lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
       lines.push("");
     }
   } else {
@@ -226,7 +177,7 @@ export async function runBrief(env, chatId) {
   lines.push("📋 <b>보고 건</b>");
   if (reports.length) {
     for (const row of reports) {
-      lines.push("• <b>" + reportTag(row) + "</b> " + reportTitle(row) + " (" + issueDate(row) + ")");
+      lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
       lines.push("");
     }
   } else {
