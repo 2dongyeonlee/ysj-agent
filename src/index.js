@@ -211,7 +211,13 @@ async function route(env, msg) {
     if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다. /whoami 로 chat_id 확인 후 ADMIN_CHAT_ID 에 등록하세요.");
     const arg = text.replace("/dedup", "").trim();
     const execute = (arg === "실행" || arg === "확정" || arg === "go" || arg === "yes");
-    const res = await dedupInsights(env, execute);
+    let res;
+    try {
+      res = await dedupInsights(env, execute);
+    } catch (e) {
+      console.error("dedup error", (e && e.stack) || e);
+      return sendMessage(env, chatId, "⚠️ 중복 정리 중 오류가 발생했습니다: " + ((e && e.message) || e));
+    }
     if (!execute) {
       return sendMessage(env, chatId,
         "🧹 <b>중복 정리 미리보기</b>\n" +
