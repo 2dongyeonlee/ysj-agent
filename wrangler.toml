@@ -19,9 +19,11 @@ binding = "DB"
 database_name = "ysj-db"
 database_id = "f756a989-7552-4125-91b6-3d99fb27e1b3"
 
+# 코드는 env.STATE 를 쓰므로 binding 은 STATE 로 고정.
+# id 는 기존 네임스페이스(데이터 보존)를 그대로 가리킨다 — KV 데이터는 id 기준.
 [[kv_namespaces]]
 binding = "STATE"
-id = "PUT_KV_NAMESPACE_ID_HERE"   # ← 대시보드 Workers & Pages > KV > STATE 네임스페이스의 ID 로 교체
+id = "fd17b2fe59b5482587cf3f3d6fc5dee2"
 
 [[r2_buckets]]
 binding = "R2"
