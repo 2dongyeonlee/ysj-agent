@@ -55,9 +55,9 @@ export function sortByIssueDate(a, b) {
 
 // 공유자(보낸 사람) 태그. " (이름)" 형태. 없으면 빈 문자열.
 export function senderTag(row) {
-  const raw = String(row.sender || "").trim();
+  const raw = String(row.sender || "").replace(/\s+/g, " ").trim();
   if (!raw) return "";
-  return " (" + raw.split(/\s+/)[0] + ")";
+  return " (" + raw.slice(0, 20) + ")";
 }
 
 // 인물 추출: people 필드 우선, 없으면 빈 문자열.

@@ -61,6 +61,17 @@ export async function sendDocumentBytes(env, chatId, bytes, filename, caption = 
 }
 
 export function senderName(msg) {
-  const f = (msg && msg.from) || {};
+  const m = msg || {};
+  // 전달된(forward) 메시지면 '원 발신자(전달해준 사람)'를 우선 표기.
+  const fo = m.forward_origin || {};
+  const fwdUser = m.forward_from || fo.sender_user;
+  if (fwdUser) {
+    const n = [fwdUser.first_name, fwdUser.last_name].filter(Boolean).join(" ");
+    if (n) return n;
+    if (fwdUser.username) return fwdUser.username;
+  }
+  const fwdName = m.forward_sender_name || fo.sender_user_name || (fo.chat && fo.chat.title) || fo.author_signature;
+  if (fwdName) return String(fwdName).trim();
+  const f = m.from || {};
   return [f.first_name, f.last_name].filter(Boolean).join(" ") || f.username || "익명";
 }

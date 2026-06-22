@@ -2,7 +2,15 @@
 
 import { getInfoInsightsSince } from "./db.js";
 import { sendMessage } from "./telegram.js";
-import { oneLine, issueDate, sortByIssueDate, senderTag, peopleText } from "./utils.js";
+import { oneLine, issueDate, issueScore, senderTag, peopleText } from "./utils.js";
+
+// 최근 날짜 먼저, 날짜 미상(—)은 맨 뒤로.
+function recentFirst(a, b) {
+  const sa = issueScore(a), sb = issueScore(b);
+  const ua = sa === 9999, ub = sb === 9999;
+  if (ua !== ub) return ua ? 1 : -1;
+  return sb - sa;
+}
 
 const INFO_CATEGORIES = [
   { name: "정부", icon: "🏢" },
@@ -40,7 +48,7 @@ async function sendLongMessage(env, chatId, text) {
 
 export async function runInfoBriefing(env, chatId, days) {
   const rows = await getInfoInsightsSince(env, sinceDaysIso(days || 14), INFO_CATEGORIES.map(function (c) { return c.name; }));
-  const items = (rows || []).filter(function (r) { return r.category && r.summary; }).sort(sortByIssueDate);
+  const items = (rows || []).filter(function (r) { return r.category && r.summary; }).sort(recentFirst);
   if (!items.length) {
     if (chatId) await sendMessage(env, chatId, "최근 정리된 대외정보가 없습니다.");
     return;
