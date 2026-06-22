@@ -14,6 +14,9 @@ import { runReclass } from "./reclass.js";
 // 권한자 인식. (1) chat_id 기반: ADMIN_CHAT_ID 또는 BRIEFING_TARGET_ID 채팅 — @username
 // 미설정 단말에서도 동작(권장). (2) ADMIN_USERNAMES @username 기반(보조).
 const ALLOWED_ADMINS = ["CHANGE_ME"];
+// 대시보드 변수 설정이 막힐 때를 위한 코드 내 관리자 chat_id (예: ["123456789"]).
+// /whoami 로 확인한 본인 chat_id 를 넣으면 대시보드 없이 관리자 권한이 적용된다.
+const ADMIN_CHAT_IDS = [];
 
 function csv(value) {
   return String(value || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
@@ -26,7 +29,9 @@ function adminUsernames(env) {
 }
 
 function adminChatIds(env) {
-  return csv((env && env.ADMIN_CHAT_ID) || "").concat(csv((env && env.BRIEFING_TARGET_ID) || ""));
+  return ADMIN_CHAT_IDS
+    .concat(csv((env && env.ADMIN_CHAT_ID) || ""))
+    .concat(csv((env && env.BRIEFING_TARGET_ID) || ""));
 }
 
 function isAdmin(env, msg) {
