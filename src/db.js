@@ -136,6 +136,23 @@ export async function getInfoInsightsSince(env, sinceIso, categories) {
   return results || [];
 }
 
+// 저장 점검(진단용): 최근 insights 를 분류·발신자·경로 그대로 조회. 키워드 있으면 필터.
+export async function checkInsights(env, keyword, limit) {
+  const lim = limit || 15;
+  if (keyword) {
+    const kw = "%" + String(keyword).replace(/[%_'"\\]/g, " ").trim() + "%";
+    const { results } = await env.DB.prepare(
+      "SELECT created_at, source_type, source_ref, category, project, sender, summary FROM insights " +
+      "WHERE summary LIKE ? OR people LIKE ? OR sender LIKE ? ORDER BY id DESC LIMIT ?"
+    ).bind(kw, kw, kw, lim).all();
+    return results || [];
+  }
+  const { results } = await env.DB.prepare(
+    "SELECT created_at, source_type, source_ref, category, project, sender, summary FROM insights ORDER BY id DESC LIMIT ?"
+  ).bind(lim).all();
+  return results || [];
+}
+
 export async function getProjectTimeline(env, project, sinceIso) {
   const name = String(project || "").trim();
   let where = "i.project != '' AND i.project IS NOT NULL";
