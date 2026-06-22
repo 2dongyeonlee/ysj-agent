@@ -80,41 +80,40 @@ function projectOneLine(text, limit) {
   const bullet = s.match(/(?:^|\s)•\s*([^•\n]+)/);
   if (bullet) s = bullet[1].trim();
 
-  const first = s.split(/(?<=[.!?。！？]|다\.|임\.|함\.)\s+/u)[0];
-  if (first && first.length >= 20) s = first.trim();
-
-  if (s.length > limit) {
-    const cut = s.slice(0, limit + 1);
-    const marks = [cut.lastIndexOf("·"), cut.lastIndexOf(","), cut.lastIndexOf(";"), cut.lastIndexOf(" 및 "), cut.lastIndexOf(" "), cut.lastIndexOf("으로")];
-    const pos = Math.max.apply(null, marks);
-    s = (pos > 35 ? cut.slice(0, pos) : s.slice(0, limit)).trim();
+  // 완결 문장이면 첫 문장만(2문장째가 짧으면 함께). 본문 substance 를 살린다.
+  const sents = s.split(/(?<=[.!?。！？]|다\.|임\.|함\.)\s+/u);
+  if (sents[0] && sents[0].length >= 20) {
+    s = sents[0].trim();
+    if (sents[1] && (s.length + sents[1].length) <= limit) s = (s + " " + sents[1]).trim();
   }
 
-  s = s
-    .replace(/[.…]+$/g, "")
+  // 길면 자연스러운 경계에서 자르고 '…'로 마무리. 잘린 조각에 '임'을 억지로 붙이지 않는다.
+  let truncated = false;
+  if (s.length > limit) {
+    const cut = s.slice(0, limit + 1);
+    const marks = [cut.lastIndexOf("·"), cut.lastIndexOf(","), cut.lastIndexOf(";"), cut.lastIndexOf(" 및 "), cut.lastIndexOf(" ")];
+    const pos = Math.max.apply(null, marks);
+    s = (pos > 40 ? cut.slice(0, pos) : s.slice(0, limit)).trim().replace(/[,·;]\s*$/, "");
+    truncated = true;
+  }
+
+  if (truncated) return s + "…";
+
+  // 잘리지 않은 완결 문장만 가볍게 음슴체로(강제 부착 없음).
+  return s
+    .replace(/[.]+$/g, "")
     .replace(/입니다$/g, "임")
+    .replace(/습니다$/g, "음")
+    .replace(/됩니다$/g, "됨")
     .replace(/이다$/g, "임")
     .replace(/한다$/g, "함")
     .replace(/하였다$/g, "함")
     .replace(/했다$/g, "함")
-    .replace(/예정이다$/g, "예정임")
-    .replace(/예정$/g, "예정임")
-    .replace(/진행 중$/g, "진행 중임")
-    .replace(/검토 중$/g, "검토 중임")
-    .replace(/필요$/g, "필요함")
-    .replace(/가능$/g, "가능함")
-    .replace(/불가$/g, "불가함")
-    .replace(/자료$/g, "자료임")
     .trim();
-
-  if (!/(함|임|됨|중|예정|필요|가능|불가|완료)$/.test(s)) {
-    if (/[가-힣A-Za-z0-9)]$/.test(s)) s += "임";
-  }
-  return s;
 }
 
 function formatItem(tag, row, brief) {
-  const limit = brief ? 72 : 90;
+  const limit = brief ? 100 : 140;
   return "  " + tag + " [" + issueDate(row) + "] " + projectOneLine(row.summary, limit) + senderTag(row);
 }
 
