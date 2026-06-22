@@ -16,6 +16,17 @@ export async function getMessagesSince(env, chatIds, sinceIso) {
   return results || [];
 }
 
+// 내용기반 중복제거: 같은 방에서 동일 본문이 최근(sinceIso 이후) 이미 저장됐는지.
+// 현재 메시지(excludeMsgId)는 제외. forward/붙여넣기로 같은 자료를 여러 번 넣어도
+// insight 가 중복 생성되지 않게 하는 근거.
+export async function priorIdenticalMessage(env, chatId, text, excludeMsgId, sinceIso) {
+  const row = await env.DB.prepare(
+    `SELECT 1 FROM messages
+     WHERE chat_id = ? AND message_id != ? AND text = ? AND created_at >= ? LIMIT 1`
+  ).bind(String(chatId), String(excludeMsgId || ""), String(text || ""), sinceIso).first();
+  return !!row;
+}
+
 // 키워드로 메시지 검색 (기능2: 자료/내용 찾기)
 export async function searchMessages(env, keyword) {
   const { results } = await env.DB.prepare(
