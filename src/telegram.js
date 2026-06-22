@@ -42,19 +42,34 @@ export async function sendMessage(env, chatId, text) {
 }
 
 export async function sendDocument(env, chatId, fileId, caption = "") {
+  const clean = cleanForHtml(caption);
   const res = await fetch(`${apiBase(env)}/sendDocument`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, document: fileId, caption }),
+    body: JSON.stringify({ chat_id: chatId, document: fileId, caption: clean.slice(0, 1000), parse_mode: "HTML" }),
   });
+  if (!res.ok) {
+    console.error("sendDocument fail", await res.text());
+    const plain = clean.replace(/<\/?[a-zA-Z]+>/g, "");
+    const retry = await fetch(`${apiBase(env)}/sendDocument`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, document: fileId, caption: plain.slice(0, 1000) }),
+    });
+    return retry.json().catch(() => ({}));
+  }
   return res.json().catch(() => ({}));
 }
 
 // 바이트(R2 원본 등)를 문서로 업로드 전송. file_id 재전송이 안 될 때 폴백.
 export async function sendDocumentBytes(env, chatId, bytes, filename, caption = "") {
+  const clean = cleanForHtml(caption);
   const form = new FormData();
   form.append("chat_id", String(chatId));
-  if (caption) form.append("caption", caption.slice(0, 1000));
+  if (clean) {
+    form.append("caption", clean.slice(0, 1000));
+    form.append("parse_mode", "HTML");
+  }
   form.append("document", new Blob([bytes]), filename || "file");
   const res = await fetch(`${apiBase(env)}/sendDocument`, { method: "POST", body: form });
   return res.json().catch(() => ({}));

@@ -78,6 +78,7 @@ function addMapEntry(map, tag, row) {
     summary: row.summary || "",
     project: displayProjectName(row.project || ""),
     date: issueDate(row),
+    sender: row.sender || "",
   };
 }
 

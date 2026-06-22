@@ -440,7 +440,8 @@ async function handleProjectItem(env, chatId, tag, item, want) {
 
   // 자료: 원본 파일을 실제로 전송
   if (want === "자료" || want === "둘다") {
-    const cap = header + (fileInfo && fileInfo.filename ? "\n📎 " + fileInfo.filename : "");
+    const owner = item.sender ? "\n상세한 내용은 원 공유자 " + item.sender + "에게 확인해 주세요." : "";
+    const cap = header + owner;
     const ok = await sendItemFile(env, chatId, item, fileInfo, cap);
     if (!ok) {
       await sendMessage(env, chatId, header + "\n📎 원본 파일을 전송할 수 없습니다" +
