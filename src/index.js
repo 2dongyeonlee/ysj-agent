@@ -315,9 +315,13 @@ async function handleProjectItem(env, chatId, tag, item, want) {
     if (!base) {
       parts.push("\n(요약할 원문이 없습니다.)");
     } else {
-      const sys = "다음 자료를 염 사장 보고용으로 상세히 정리하라. 배경·핵심내용·의사결정/후속·관련 인물을 구분해 충실히. 없는 내용은 지어내지 말 것.";
+      const sys = "다음 자료를 염성진 사장 보고용으로 '요약'하라. 원문을 그대로 옮기거나 표를 복사하지 말고 핵심만 압축하라.\n" +
+        "- 맨 위 한 줄로 결론. 이어서 핵심 포인트 3~6개를 '• '로 짧게.\n" +
+        "- 마크다운(표 |---|, #, **, -) 절대 금지. 강조는 <b></b>만. 불릿은 '• '.\n" +
+        "- 숫자·날짜·금액·고유명사는 정확히 유지. 없는 내용은 지어내지 말 것.\n" +
+        "- 결정·후속 사항이 있으면 마지막에 '결정/후속:' 한두 줄.";
       try {
-        const detail = await callClaude(env, base.slice(0, 12000), sys, MODEL_SMART, 2000);
+        const detail = await callClaude(env, "자료:\n" + base.slice(0, 12000), sys, MODEL_SMART, 900);
         parts.push("\n" + detail);
       } catch (e) {
         parts.push("\n(요약 생성 실패) 원문 요지: " + String(item.summary || "").slice(0, 500));
