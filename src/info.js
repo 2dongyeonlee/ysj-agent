@@ -2,7 +2,7 @@
 
 import { getInfoInsightsSince } from "./db.js";
 import { sendMessage } from "./telegram.js";
-import { oneLine, issueDate, issueScore, senderTag, peopleText } from "./utils.js";
+import { oneLine, issueDate, issueScore, senderTag, peopleText, stripHtml } from "./utils.js";
 
 function recentFirst(a, b) {
   const sa = issueScore(a), sb = issueScore(b);
@@ -20,6 +20,10 @@ const INFO_CATEGORIES = [
 ];
 
 const SEPARATOR = "━━━━━━━━━";
+const STOPWORDS = new Set([
+  "보고요망", "관련", "통해", "대한", "대해", "하며", "하고", "있다", "있음", "중임",
+  "필요", "강화", "추진", "가능성", "상황", "제기", "예정", "자료", "브리핑",
+]);
 
 function sinceDaysIso(days) {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
@@ -28,6 +32,38 @@ function sinceDaysIso(days) {
 function todayText() {
   const d = new Date();
   return (d.getMonth() + 1) + "/" + d.getDate();
+}
+
+function tokens(row) {
+  const text = (stripHtml(row.summary || "") + " " + stripHtml(row.people || ""))
+    .replace(/\[(보고요망|보고|공유|참고|검토요망|검토|긴급|중요)\]\s*/g, "")
+    .replace(/[0-9]+(?:\.[0-9]+)?/g, " ")
+    .replace(/[^\p{L}A-Za-z]+/gu, " ")
+    .toLowerCase();
+  const raw = text.split(/\s+/).filter(function (t) { return t.length >= 2 && !STOPWORDS.has(t); });
+  return Array.from(new Set(raw));
+}
+
+function sameIssue(a, b) {
+  if (a.category !== b.category) return false;
+  const da = issueDate(a), db = issueDate(b);
+  const sameDate = da === "—" || db === "—" || da === db;
+  const ta = tokens(a), tb = tokens(b);
+  if (!ta.length || !tb.length) return false;
+  const setB = new Set(tb);
+  let common = 0;
+  for (const t of ta) if (setB.has(t)) common++;
+  const score = common / Math.min(ta.length, tb.length);
+  return sameDate ? score >= 0.5 : score >= 0.75;
+}
+
+function dedupeIssues(rows) {
+  const kept = [];
+  for (const row of rows) {
+    if (kept.some(function (prev) { return sameIssue(prev, row); })) continue;
+    kept.push(row);
+  }
+  return kept;
 }
 
 async function sendLongMessage(env, chatId, text) {
@@ -47,7 +83,7 @@ async function sendLongMessage(env, chatId, text) {
 
 export async function runInfoBriefing(env, chatId, days) {
   const rows = await getInfoInsightsSince(env, sinceDaysIso(days || 14), INFO_CATEGORIES.map(function (c) { return c.name; }));
-  const items = (rows || []).filter(function (r) { return r.category && r.summary; }).sort(recentFirst);
+  const items = dedupeIssues((rows || []).filter(function (r) { return r.category && r.summary; }).sort(recentFirst));
   if (!items.length) {
     if (chatId) await sendMessage(env, chatId, "최근 정리된 대외정보가 없습니다.");
     return;
