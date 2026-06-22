@@ -9,7 +9,7 @@ import { handleVoice } from "./voice.js";
 import { classifyIntent } from "./intent.js";
 import { sendMessage, sendDocument, sendDocumentBytes } from "./telegram.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
-import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks, checkInsights } from "./db.js";
+import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks, checkInsights, dedupInsights } from "./db.js";
 import { runReclass } from "./reclass.js";
 
 // 권한자 인식. (1) chat_id 기반: ADMIN_CHAT_ID 또는 BRIEFING_TARGET_ID 채팅 — @username
@@ -202,6 +202,28 @@ async function route(env, msg) {
     }
     if (dupGroupCount) lines.push("ℹ️ ⚠️중복 = 같은 내용이 여러 번 저장됨(원본 1건 + 중복). 정리가 필요하면 말씀하세요.");
     return sendMessage(env, chatId, lines.join("\n"));
+  }
+
+  // 중복 정리(권한자만): 같은 내용이 여러 번 저장된 것을 그룹당 1건(원본)만 남기고 삭제.
+  //  /dedup        → 미리보기(삭제 안 함)
+  //  /dedup 실행   → 실제 삭제
+  if (text === "/dedup" || text.startsWith("/dedup ")) {
+    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다. /whoami 로 chat_id 확인 후 ADMIN_CHAT_ID 에 등록하세요.");
+    const arg = text.replace("/dedup", "").trim();
+    const execute = (arg === "실행" || arg === "확정" || arg === "go" || arg === "yes");
+    const res = await dedupInsights(env, execute);
+    if (!execute) {
+      return sendMessage(env, chatId,
+        "🧹 <b>중복 정리 미리보기</b>\n" +
+        "• 전체 " + res.total + "건 · 중복 " + res.groupCount + "그룹\n" +
+        "• 삭제 예정 <b>" + res.deleteCount + "건</b> (그룹마다 가장 먼저 저장된 1건은 보존)\n\n" +
+        (res.deleteCount
+          ? "실제로 지우려면 <code>/dedup 실행</code> 을 보내세요. (되돌릴 수 없습니다)"
+          : "지울 중복이 없습니다."));
+    }
+    return sendMessage(env, chatId,
+      "✅ <b>중복 정리 완료</b>\n" +
+      "• 삭제 " + res.deleteCount + "건 · 보존 " + (res.total - res.deleteCount) + "건 (전체 " + res.total + " → " + (res.total - res.deleteCount) + ")");
   }
 
   // 프로젝트 키워드 관리 (권한자만)
