@@ -112,8 +112,8 @@ export function pickAudio(msg) {
 export async function handleVoice(env, chatId, msg, replyToUser = false) {
   const voice = pickAudio(msg);
   if (!voice) return;
-  if (voice.file_size && voice.file_size > 25 * 1024 * 1024) {
-    return sendMessage(env, chatId, "녹음 파일이 너무 큽니다 (25MB 초과). 잘라서 보내주세요.");
+  if (voice.file_size && voice.file_size > 20 * 1024 * 1024) {
+    return sendMessage(env, chatId, "녹음 파일이 너무 큽니다 (텔레그램 봇 한계 20MB). 10분 내외로 잘라 보내주세요.");
   }
 
   if (replyToUser) await sendMessage(env, chatId, "🎙 녹음을 받아쓰고 회의록을 작성하는 중입니다...");
@@ -217,12 +217,21 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
   }
 
   if (!replyToUser) return; // silent store only
-  const transcriptForMinutes = (transcriptTimed || transcript || "").slice(0, 16000);
+
+  // 1) 전사문을 먼저 전송 — 요약이 실패/지연돼도 최소한 받아쓰기는 받게 한다.
+  const plainTr = (transcript || "").trim();
+  if (plainTr) {
+    const head = plainTr.slice(0, 3500);
+    await sendMessage(env, chatId, "🎙 받아쓰기 완료:\n\n" + head + (plainTr.length > 3500 ? "\n\n…(이하 생략, 전문은 저장됨)" : ""));
+  }
+
+  // 2) 회의록 요약 — 입력·출력 축소로 시간 내 완료 (Workers 한계 대응)
+  const transcriptForMinutes = (transcriptTimed || transcript || "").slice(0, 9000);
   try {
-    const minutes = await callClaude(env, "아래는 [시간] 발화 형식의 받아쓰기 전문이다. 시간 흐름과 발화 전환을 참고해 회의록을 작성하라.\n\n" + transcriptForMinutes, VOICE_SYSTEM, MODEL_SMART, 4000);
+    const minutes = await callClaude(env, "아래는 받아쓰기 전문이다. 핵심 위주로 간결한 회의록을 작성하라.\n\n" + transcriptForMinutes, VOICE_SYSTEM, MODEL_SMART, 2200);
     await sendMessage(env, chatId, minutes);
   } catch (e) {
     console.error("voice minutes error", e && (e.stack || e.message));
-    await sendMessage(env, chatId, "회의록 작성 중 오류가 발생했습니다. 받아쓰기는 저장했습니다. 다시 '회의록 작성'이라고 답장해 주세요.");
+    await sendMessage(env, chatId, "회의록 요약은 시간이 초과됐지만, 위 받아쓰기와 원본은 저장됐습니다. '회의록 작성'이라고 답장하면 다시 시도합니다.");
   }
 }
