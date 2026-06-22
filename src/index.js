@@ -88,15 +88,18 @@ const HELP =
   "<i>기존 파일 재분류: /reclass</i>";
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method !== "POST") return new Response("ok");
     let update;
     try { update = await request.json(); } catch { return new Response("ok"); }
     if (update.my_chat_member) return new Response("ok");
     const msg = update.message;
     if (!msg) return new Response("ok");
-    try { await route(env, msg); }
-    catch (e) { console.error("route error", (e && e.stack) || e); }
+    // 무거운 처리(녹음 STT·요약 등)는 응답을 막지 않도록 백그라운드로 돌린다.
+    // Telegram 에 즉시 200 을 돌려줘 웹훅 타임아웃(~60s)·재시도·중복 전송을 방지.
+    ctx.waitUntil(
+      route(env, msg).catch((e) => console.error("route error", (e && e.stack) || e))
+    );
     return new Response("ok");
   },
 
