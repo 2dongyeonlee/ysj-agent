@@ -16,6 +16,41 @@ const ISSUE_RE = /보고|결정|확인|승인|검토|면담|간담회|발표|준
 const DECISION_RE = /사장님|결정|확정|승인|확인 필요|보고요망|보고 필요|보내주세요|대응 방침|요청|준비 필요|검토 필요|발표내용/;
 const REPORT_RE = /보고|발표|준비|토킹포인트|연설|간담회|행사|O\/I|TF|추진 현황|운영계획|보고드립니다|발표자료|아젠다/;
 
+const BRIEF_SYSTEM = PERSONA_STYLE + "\n\n" +
+  "당신은 염성진 사장의 당일 업무 브리핑 비서다. 입력은 최근 공유된 사내 보고자료, 프로젝트 자료, 대외정보, 회의록 원문이다.\n\n" +
+  "[핵심 역할]\n" +
+  "- /brief는 뉴스 요약이 아니다. 사장이 오늘/곧 챙겨야 할 업무만 뽑는다.\n" +
+  "- 저장된 summary 첫 줄을 베끼지 말고, 원문 전체를 읽어 사장 보고용 1줄로 다시 쓴다.\n" +
+  "- 표지문, 목차, 'For Discussion Purpose Only', '사장님.' 같은 껍데기 문구는 버린다.\n\n" +
+  "[섹션 정의]\n" +
+  "1) 🚨 결정·확인 필요\n" +
+  "- 사장이 직접 판단·승인·확인해야 하는 항목만. 단순 정보/뉴스/토의용 자료는 넣지 않는다.\n" +
+  "- '검토중', '토의용', 'For Discussion Purpose Only'는 결정이 아니다. 확인 필요가 명시되지 않으면 제외한다.\n\n" +
+  "2) 🤝 만남 (외부)\n" +
+  "- 외부 인사와의 실제/예정 면담·간담회·미팅만.\n" +
+  "- 사내 인물, 문서 속 언급 인물, 뉴스 속 인물은 제외한다.\n\n" +
+  "3) 📋 보고 건\n" +
+  "- 사내 보고자료 또는 사장이 준비해서 말해야 하는 발표·회의·행사 보고.\n" +
+  "- O/I, TF, CR, AX, 운영계획, 추진 현황, 발표자료는 이 섹션에 넣는다.\n" +
+  "- 형식 예: • [6/24] O/I 보고 자료 — CR 지원팀 입법 패키지·AX 운영계획·추진 일정 포함 (동균)\n" +
+  "- '[내부]/[외부]' 태그는 붙이지 않는다.\n\n" +
+  "[날짜]\n" +
+  "- 날짜는 앞으로 예정된 사안일을 우선한다. 원문에 없으면 created 날짜를 쓰되, 이상한 날짜(30/0, 31/4)는 쓰지 않는다.\n" +
+  "- 25/6처럼 일/월로 보이면 6/25로 고친다.\n\n" +
+  "[출력]\n" +
+  "- 아래 양식만 출력. 없는 섹션은 '• 없음' 한 줄.\n" +
+  "- 각 항목은 1줄, 90자 안팎. 내용이 메인이다.\n" +
+  "- 굵게는 HTML <b>만 사용. 마크다운 ** 금지.\n\n" +
+  "🗞 브리핑 · {오늘}\n" +
+  "━━━━━━━━━\n\n" +
+  "🚨 <b>결정·확인 필요</b>\n" +
+  "• [M/D] {사장이 결정/확인할 내용} ({공유자})\n\n" +
+  "🤝 <b>만남 (외부)</b>\n" +
+  "• [M/D] <b>{외부 인물}</b> {소속/직책} — {만남 목적} ({공유자})\n\n" +
+  "📋 <b>보고 건</b>\n" +
+  "• [M/D] {보고자료명/회의명} — {핵심 내용 2~3개 압축} ({공유자})\n\n" +
+  "━━━━━━━━━";
+
 const MORNING_SYSTEM = PERSONA_STYLE + "\n\n" +
   "[작업] 지난 하루 대화를 읽고 사장이 출근길 30초에 파악하도록 정리. 각 항목 1줄.\n" +
   "날짜·사람·안건은 <b>굵게</b>. 해당 없는 분류는 생략.\n" +
@@ -120,6 +155,41 @@ function uniqueRows(rows) {
   return out;
 }
 
+function displaySender(row) {
+  const raw = String(row.sender || row.author || "").replace(/\s+/g, " ").trim();
+  if (!raw) return "—";
+  return (raw.split(" ")[0] || raw).slice(0, 20);
+}
+
+function sourceText(row) {
+  return stripHtml(row.raw_message || row.raw_file || row.summary || "").trim();
+}
+
+function buildBriefPrompt(rows) {
+  const blocks = rows.slice(0, 60).map(function (row, idx) {
+    return [
+      "[자료 " + (idx + 1) + "]",
+      "분류: " + (row.project ? "프로젝트:" + row.project : (row.category || "")),
+      "사안일힌트: " + issueDate(row),
+      "공유자: " + displaySender(row),
+      "인물힌트: " + stripHtml(row.people || ""),
+      "저장요약: " + stripHtml(row.summary || ""),
+      "원문:",
+      sourceText(row).slice(0, 1400),
+    ].join("\n");
+  });
+  return "오늘: " + todayText() + "\n\n" + blocks.join("\n\n---\n\n");
+}
+
+function cleanBriefOutput(text) {
+  const out = String(text || "")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .trim();
+  if (!out.includes("🗞 브리핑") || !out.includes("📋")) return "";
+  return out;
+}
+
 async function sendLongMessage(env, chatId, text) {
   const limit = 3500;
   const parts = [];
@@ -154,6 +224,19 @@ export async function runBrief(env, chatId) {
     .filter(function (r) { return r.category === "내부" || isOI(r); });
 
   const workRows = internalRows.concat(projRows);
+  const sourceRows = uniqueRows(workRows.concat(infoRows))
+    .filter(function (r) { return isUsefulRow(r) || isOI(r) || isMeetingRow(r) || /O\/I|OI|CR|AX|TF|보고|발표자료|운영계획|추진 현황/.test(sourceText(r)); })
+    .sort(byImminence);
+
+  if (sourceRows.length) {
+    try {
+      const composed = cleanBriefOutput(await callClaude(env, buildBriefPrompt(sourceRows), BRIEF_SYSTEM, MODEL_SMART, 2600));
+      if (composed) return sendLongMessage(env, chatId, composed);
+    } catch (e) {
+      console.error("compose brief error", e && e.message);
+    }
+  }
+
   const decisions = uniqueRows(workRows.filter(isDecisionRow).filter(isTodayOrFuture)).sort(byImminence).slice(0, 5);
   const meetings = uniqueRows(infoRows.filter(isMeetingRow).filter(isTodayOrFuture)).sort(byImminence).slice(0, 4);
   const reports = uniqueRows(workRows.filter(isReportRow).filter(isTodayOrFuture)).sort(byImminence).slice(0, 5);

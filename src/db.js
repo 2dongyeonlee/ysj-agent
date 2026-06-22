@@ -139,7 +139,10 @@ export async function getInsightsSince(env, sinceIso, filter) {
   if (filter && filter.sourceType) { where += " AND source_type = ?"; binds.push(filter.sourceType); }
   if (filter && filter.hasSchedule) { where += " AND schedule != ''"; }
   const { results } = await env.DB.prepare(
-    "SELECT source_type, source_ref, schedule, category, project, summary, people, followup, done, decision, source, author, report_date, sender, created_at FROM insights WHERE " + where + " ORDER BY created_at DESC LIMIT 100"
+    "SELECT source_type, source_ref, schedule, category, project, summary, people, followup, done, decision, source, author, report_date, sender, created_at, " +
+    "(SELECT text FROM messages m WHERE m.message_id = CASE WHEN instr(insights.source_ref, '#') > 0 THEN substr(insights.source_ref, 1, instr(insights.source_ref, '#') - 1) ELSE insights.source_ref END ORDER BY created_at DESC LIMIT 1) AS raw_message, " +
+    "(SELECT text FROM files f WHERE f.file_id = insights.source_ref ORDER BY id DESC LIMIT 1) AS raw_file " +
+    "FROM insights WHERE " + where + " ORDER BY created_at DESC LIMIT 100"
   ).bind(...binds).all();
   return results || [];
 }
