@@ -20,6 +20,20 @@ async function getFileUrl(env, fileId) {
 
 const STT_PROMPT = "SK하이닉스 커뮤니케이션 총괄의 회의/간담회 녹음입니다. 여러 명이 번갈아 발언합니다. 인명·직책·기관명(SK하이닉스, 환경재단, UNEP 등)·프로젝트명(넥서스, 서남권, ADR 등)·숫자·금액을 정확히 받아쓰세요.";
 
+function looksBadTranscript(text) {
+  const body = String(text || "").replace(/\s+/g, " ").trim();
+  if (body.length < 20) return true;
+  const promptEcho = "SK하이닉스 커뮤니케이션 총괄의 회의";
+  const echoCount = body.split(promptEcho).length - 1;
+  if (echoCount >= 2) return true;
+  const words = body.split(/\s+/).filter(Boolean);
+  if (words.length >= 20) {
+    const unique = new Set(words);
+    if (unique.size / words.length < 0.18) return true;
+  }
+  return false;
+}
+
 // OpenAI 최대 활용: whisper-1 + verbose_json 으로 세그먼트(시간) 확보.
 // 화자 분리는 OpenAI 미지원이나, 시간 세그먼트가 발화 전환 추정 단서가 된다.
 async function transcribe(env, audioBuf, filename) {
@@ -29,7 +43,6 @@ async function transcribe(env, audioBuf, filename) {
   form.append("language", "ko");
   form.append("response_format", "verbose_json");
   form.append("temperature", "0");
-  form.append("prompt", STT_PROMPT);
   const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST",
     headers: { "authorization": "Bearer " + env.OPENAI_API_KEY },
@@ -52,9 +65,19 @@ async function transcribe(env, audioBuf, filename) {
     const lines = data.segments.map(function (seg) {
       return "[" + fmt(seg.start) + "] " + String(seg.text || "").trim();
     });
-    return { plain: String(data.text || "").trim(), timed: lines.join("\n") };
+    const plain = String(data.text || "").trim();
+    if (looksBadTranscript(plain)) {
+      console.error("STT bad transcript, retry fallback");
+      return await transcribeFallback(env, audioBuf, filename);
+    }
+    return { plain, timed: lines.join("\n") };
   }
-  return { plain: String(data.text || "").trim(), timed: String(data.text || "").trim() };
+  const plain = String(data.text || "").trim();
+  if (looksBadTranscript(plain)) {
+    console.error("STT bad transcript, retry fallback");
+    return await transcribeFallback(env, audioBuf, filename);
+  }
+  return { plain, timed: plain };
 }
 
 // 폴백: verbose_json 미지원/실패 시 gpt-4o-transcribe 텍스트.
@@ -64,7 +87,6 @@ async function transcribeFallback(env, audioBuf, filename) {
   form.append("model", "gpt-4o-transcribe");
   form.append("language", "ko");
   form.append("response_format", "text");
-  form.append("prompt", STT_PROMPT);
   const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST",
     headers: { "authorization": "Bearer " + env.OPENAI_API_KEY },
@@ -72,6 +94,7 @@ async function transcribeFallback(env, audioBuf, filename) {
   });
   if (!res.ok) throw new Error("STT failed " + res.status);
   const t = (await res.text()).trim();
+  if (looksBadTranscript(t)) throw new Error("STT produced unusable transcript");
   return { plain: t, timed: t };
 }
 
@@ -187,6 +210,11 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
 
   if (!replyToUser) return; // silent store only
   const transcriptForMinutes = (transcriptTimed || transcript || "").slice(0, 16000);
-  const minutes = await callClaude(env, "아래는 [시간] 발화 형식의 받아쓰기 전문이다. 시간 흐름과 발화 전환을 참고해 회의록을 작성하라.\n\n" + transcriptForMinutes, VOICE_SYSTEM, MODEL_SMART, 4000);
-  await sendMessage(env, chatId, minutes);
+  try {
+    const minutes = await callClaude(env, "아래는 [시간] 발화 형식의 받아쓰기 전문이다. 시간 흐름과 발화 전환을 참고해 회의록을 작성하라.\n\n" + transcriptForMinutes, VOICE_SYSTEM, MODEL_SMART, 4000);
+    await sendMessage(env, chatId, minutes);
+  } catch (e) {
+    console.error("voice minutes error", e && (e.stack || e.message));
+    await sendMessage(env, chatId, "회의록 작성 중 오류가 발생했습니다. 받아쓰기는 저장했습니다. 다시 '회의록 작성'이라고 답장해 주세요.");
+  }
 }
