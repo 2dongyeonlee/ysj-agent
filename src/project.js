@@ -1,23 +1,18 @@
 // project.js - grouped project briefing from structured insights.
 
-import { getProjectTimeline } from "./db.js";
+import { getProjectTimeline, getSubtasks } from "./db.js";
 import { sendMessage } from "./telegram.js";
 
-// 프로젝트별 하위과제는 본문에서 자연스럽게 드러나므로 고정 리스트 미사용.
-const NEXUS_SUBS = [];
+// 하위과제는 DB(project_subtasks)에서 프로젝트별로 조회 (하드코딩 제거)
 const SEPARATOR = "━━━━━━━━━";
 
 function stripHtml(text) {
   return String(text || "").replace(/<\/?[a-zA-Z]+>/g, "").replace(/\s+/g, " ").trim();
 }
 
-function truncateWords(text, max) {
-  if (text.length <= max) return text;
-  const head = text.slice(0, max);
-  const sentEnd = head.search(/(?:다|임|음)\.\s|[.!?。]\s/);
-  if (sentEnd > 30) return head.slice(0, sentEnd + 1).trim();
-  const cut = head.lastIndexOf(" ");
-  return (cut > 30 ? head.slice(0, cut) : head).trim() + "…";
+// 글자수 컷 제거 — 첫 문장을 통째로 보존(말 끊김 방지). 요약 품질은 insight 저장 단계가 담당.
+function truncateWords(text) {
+  return String(text || "").trim();
 }
 
 function firstSentence(text) {
@@ -32,7 +27,7 @@ function firstSentence(text) {
   const bullet = cleaned.match(/(?:^|\s)•\s*([^•\n]+)/);
   const source = bullet ? bullet[1].trim() : cleaned;
   const sentence = source.split(/(?<=[.!?。]|다\.|임\.|음\.)\s+/u)[0] || source;
-  return truncateWords(sentence, 120);
+  return sentence.trim();
 }
 
 function issueDate(row) {
@@ -83,10 +78,10 @@ function displayProjectName(project) {
   return normalizeProjectName(project) === "nexus" ? "넥서스" : project;
 }
 
-function subTasks(text) {
+function subTasks(text, subList) {
   const found = [];
-  for (const sub of NEXUS_SUBS) {
-    if (String(text || "").indexOf(sub) !== -1 && found.indexOf(sub) === -1) found.push(sub);
+  for (const sub of (subList || [])) {
+    if (sub && String(text || "").indexOf(sub) !== -1 && found.indexOf(sub) === -1) found.push(sub);
   }
   return found;
 }
@@ -110,19 +105,18 @@ function progressLine(rows) {
     return min + "조 → " + max + "조";
   }
   if (nums.length === 1) return nums[0] + "조";
-  const first = rows[0] ? firstSentence(rows[0].summary) : "";
-  const latest = rows[rows.length - 1] ? firstSentence(rows[rows.length - 1].summary) : "";
-  return first && latest && first !== latest ? first + " → " + latest : latest;
+  return "";
 }
 
-function formatGroup(project, rows) {
+function formatGroup(project, rows, subList) {
   const sorted = rows.slice().sort(sortByIssueDate);
   const lines = ["📂 [<b>" + displayProjectName(project) + "</b>]"];
   for (const row of sorted) {
     lines.push("• " + firstSentence(row.summary));
-    for (const sub of subTasks(row.summary)) lines.push(formatSubTask(sub, row.summary));
+    for (const sub of subTasks(row.summary, subList)) lines.push(formatSubTask(sub, row.summary));
   }
-  lines.push("🔍 경과: " + progressLine(sorted));
+  const prog = progressLine(sorted);
+  if (prog) lines.push("🔍 경과: " + prog);
   return lines.join("\n");
 }
 
@@ -142,7 +136,8 @@ async function sendLongMessage(env, chatId, text) {
 }
 
 export async function runProjectBriefing(env, chatId, days, name) {
-  const rows = await getProjectTimeline(env, name || "");
+  const sinceIso = days ? new Date(Date.now() - days * 86400000).toISOString() : null;
+  const rows = await getProjectTimeline(env, name || "", sinceIso);
   const filtered = (rows || []).filter(function (r) { return r.project; }).sort(sortByIssueDate);
   if (!filtered.length) {
     if (chatId) await sendMessage(env, chatId, "최근 정리된 프로젝트 현황이 없습니다.");
@@ -159,7 +154,10 @@ export async function runProjectBriefing(env, chatId, days, name) {
   const keys = Object.keys(groups).sort();
   const title = keys.length === 1 ? "📂 프로젝트 · " + displayProjectName(keys[0]) : "📂 프로젝트";
   const lines = [title, SEPARATOR];
-  for (const key of keys) lines.push(formatGroup(key, groups[key]));
+  for (const key of keys) {
+    const subList = await getSubtasks(env, displayProjectName(key));
+    lines.push(formatGroup(key, groups[key], subList));
+  }
   lines.push(SEPARATOR);
   lines.push("ℹ️ 대외정보 /info · 핵심 /brief");
 

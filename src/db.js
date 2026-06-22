@@ -136,18 +136,52 @@ export async function getInfoInsightsSince(env, sinceIso, categories) {
   return results || [];
 }
 
-export async function getProjectTimeline(env, project) {
+export async function getProjectTimeline(env, project, sinceIso) {
   const name = String(project || "").trim();
-  const where = name
-    ? "i.project != '' AND i.project IS NOT NULL AND i.project LIKE ?"
-    : "i.project != '' AND i.project IS NOT NULL";
-  const binds = name ? ["%" + name + "%"] : [];
+  let where = "i.project != '' AND i.project IS NOT NULL";
+  const binds = [];
+  if (name) { where += " AND i.project LIKE ?"; binds.push("%" + name + "%"); }
+  if (sinceIso) { where += " AND i.created_at >= ?"; binds.push(sinceIso); }
   const { results } = await env.DB.prepare(
     "SELECT i.schedule, i.project, i.summary, i.people, i.sender, i.created_at, " +
     "(SELECT filename FROM files f WHERE f.file_id = i.source_ref ORDER BY id DESC LIMIT 1) AS filename " +
     "FROM insights i WHERE " + where + " ORDER BY lower(i.project), i.created_at ASC LIMIT 50"
   ).bind(...binds).all();
   return results || [];
+}
+
+// ===== 프로젝트 하위과제 (project_subtasks) — /addsub 로 등록 =====
+export async function addSubtask(env, project, sub) {
+  await env.DB.prepare(
+    "CREATE TABLE IF NOT EXISTS project_subtasks (project TEXT, subtask TEXT, UNIQUE(project, subtask))"
+  ).run();
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO project_subtasks (project, subtask) VALUES (?, ?)"
+  ).bind(String(project || "").trim(), String(sub || "").trim()).run();
+}
+
+export async function getSubtasks(env, project) {
+  try {
+    const { results } = await env.DB.prepare(
+      "SELECT subtask FROM project_subtasks WHERE project LIKE ? ORDER BY subtask"
+    ).bind("%" + String(project || "").trim() + "%").all();
+    return (results || []).map(function (r) { return r.subtask; });
+  } catch (e) { return []; }
+}
+
+export async function listSubtasks(env) {
+  try {
+    const { results } = await env.DB.prepare(
+      "SELECT project, subtask FROM project_subtasks ORDER BY project, subtask"
+    ).all();
+    return results || [];
+  } catch (e) { return []; }
+}
+
+export async function delSubtasks(env, project) {
+  await env.DB.prepare(
+    "DELETE FROM project_subtasks WHERE project = ?"
+  ).bind(String(project || "").trim()).run();
 }
 
 // ===== 프로젝트 키워드 분류 (0007) =====

@@ -8,7 +8,7 @@ import { runProjectBriefing } from "./project.js";
 import { handleVoice } from "./voice.js";
 import { classifyIntent } from "./intent.js";
 import { sendMessage } from "./telegram.js";
-import { addProjectKeyword, listProjects, deleteProject } from "./db.js";
+import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks } from "./db.js";
 import { runReclass } from "./reclass.js";
 
 // 권한자 인식. (1) chat_id 기반: ADMIN_CHAT_ID 또는 BRIEFING_TARGET_ID 채팅 — @username
@@ -181,12 +181,48 @@ async function route(env, msg) {
     return sendMessage(env, chatId, n ? ("🗑 <b>" + name + "</b> 키워드 " + n + "개 삭제") : ("'" + name + "' 프로젝트를 찾지 못했습니다."));
   }
 
+  // 프로젝트 하위과제 관리 (권한자만). /project 출력의 └ 항목.
+  if (text.startsWith("/addsub")) {
+    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다. /whoami 로 chat_id 확인 후 ADMIN_CHAT_ID 에 등록하세요.");
+    const arg = text.replace("/addsub", "").trim();
+    const parts = arg.split("|");
+    const proj = (parts[0] || "").trim();
+    const subsRaw = parts.slice(1).join("|").trim();
+    if (!proj || !subsRaw) return sendMessage(env, chatId, "형식: /addsub 프로젝트 | 하위과제1,하위과제2");
+    const subs = subsRaw.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+    for (const s of subs) await addSubtask(env, proj, s);
+    return sendMessage(env, chatId, "✅ <b>" + proj + "</b> 하위과제 추가: " + subs.join(", "));
+  }
+  if (text.startsWith("/listsub")) {
+    const rows = await listSubtasks(env);
+    if (!rows.length) return sendMessage(env, chatId, "등록된 하위과제가 없습니다.");
+    const byProj = {};
+    for (const r of rows) { (byProj[r.project] = byProj[r.project] || []).push(r.subtask); }
+    const lines = ["📁 <b>프로젝트 하위과제</b>", ""];
+    for (const p in byProj) lines.push("• <b>" + p + "</b>: " + byProj[p].join(", "));
+    return sendMessage(env, chatId, lines.join("\n"));
+  }
+  if (text.startsWith("/delsub")) {
+    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다. /whoami 로 chat_id 확인 후 ADMIN_CHAT_ID 에 등록하세요.");
+    const proj = text.replace("/delsub", "").trim();
+    if (!proj) return sendMessage(env, chatId, "형식: /delsub 프로젝트");
+    await delSubtasks(env, proj);
+    return sendMessage(env, chatId, "🗑 <b>" + proj + "</b> 하위과제 삭제");
+  }
+
   if (text.startsWith("/brief")) return runBrief(env, chatId);
   if (text.startsWith("/decision")) return runBrief(env, chatId); // decision 은 /brief 로 통합
-  if (text.startsWith("/info")) return runInfoBriefing(env, chatId, 7);
+  if (text.startsWith("/info")) {
+    const arg = text.replace("/info", "").trim();
+    const days = /^\d+$/.test(arg) ? parseInt(arg, 10) : 1;
+    return runInfoBriefing(env, chatId, days);
+  }
   if (text.startsWith("/project")) {
-    const name = text.replace("/project", "").trim();
-    return runProjectBriefing(env, chatId, 7, name);
+    const arg = text.replace("/project", "").trim();
+    let days = 7, name = arg;
+    const mNum = arg.match(/(\d+)/);
+    if (mNum) { days = parseInt(mNum[1], 10); name = arg.replace(mNum[1], "").trim(); }
+    return runProjectBriefing(env, chatId, days, name);
   }
   if (text.startsWith("/summary")) {
     const kw = text.replace("/summary", "").trim();
@@ -225,7 +261,7 @@ async function route(env, msg) {
       case "summary":  return summarizeLatest(env, chatId, target);
       case "project":  return runProjectBriefing(env, chatId, 7, target);
       case "decision": return runBrief(env, chatId);
-      case "info":     return runInfoBriefing(env, chatId, 7);
+      case "info":     return runInfoBriefing(env, chatId, 1);
       case "brief":    return runBrief(env, chatId);
       case "question": return handleQA(env, chatId, cleanText);
       default:
