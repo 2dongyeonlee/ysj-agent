@@ -4,7 +4,7 @@
 import { callClaude, MODEL_FAST } from "./claude.js";
 import { getProjectKeywords, updateInsightDone } from "./db.js";
 
-const INFO_CATEGORIES = ["정부", "국회", "BH", "글로벌", "언론"];
+const INFO_CATEGORIES = ["정부", "국회", "BH", "글로벌", "언론", "내부", "기타"];
 
 const EXTRACT_SYSTEM = `당신은 염성진 사장 자료 분류 비서다.
 JSON만 반환하라. 마크다운 금지.
@@ -13,9 +13,11 @@ JSON만 반환하라. 마크다운 금지.
 1. 자료 성격을 먼저 판정:
    - 아래 [등록된 프로젝트] 중 하나에 관한 자료 → project=그 프로젝트명, category 비움
      (키워드가 정확히 안 보여도 내용 맥락이 그 프로젝트면 그 프로젝트로 분류한다)
-   - 어느 프로젝트에도 안 맞는 대외정보(외부 정세·대면 활동) → category=5개 중 하나, project 비움
-   - 내부 보고/운영계획(O/I 등) → category·project 모두 비움
-2. category는 5개만(그 외·임의생성 금지): 정부 / 국회 / BH / 글로벌 / 언론
+   - 어느 프로젝트에도 안 맞는 대외정보(외부 정세·대면 활동) → category=7개 중 하나, project 비움
+   - 내부 보고/운영계획(O/I 등) → category=내부, project 비움
+2. category는 7개 중 하나로 반드시 채운다(빈 값 금지): 정부 / 국회 / BH / 글로벌 / 언론 / 내부 / 기타
+   - 내부: 사내 발언·회의·타운홀·운영계획·조직문화 등 내부 자료
+   - 기타: 위 6개 어디에도 안 맞을 때만 (최후의 보루, 남발 금지)
    - "정책"·"언론PR" 쓰지 말 것 → 정부·언론으로.
 3. 대면 활동도 대외정보다. 만난 상대 소속으로 category 분류(정부 인사 면담→정부).
 4. project는 nexus/넥서스 표기를 'nexus'로 통일.
@@ -27,11 +29,11 @@ decision·followup 컬럼은 사용하지 않는다. 결정사항은 summary에 
 스키마:
 {
   "kind": "project | info | internal",
-  "category": "정부, 국회, BH, 글로벌, 언론 중 하나. kind가 info가 아니면 빈 문자열",
+  "category": "정부, 국회, BH, 글로벌, 언론, 내부, 기타 중 하나. 반드시 채운다(빈 값 금지). kind가 project면 빈 문자열",
   "project": "프로젝트명. nexus/넥서스는 nexus. kind가 project가 아니면 빈 문자열",
   "schedule": "날짜+안건. 없으면 빈 문자열",
   "summary": "30자 이내 핵심 1줄. 불릿(•)·이모지·📋·📌·제목 형식 금지. 완성된 짧은 서술문으로.",
-  "people": "관련 인물/소속. 없으면 빈 문자열"
+  "people": "관련 인물·소속을 최대한 구체적으로(이름+직책/소속). 대면·면담·발언 자료는 누가 등장하는지 반드시 추출. 없으면 빈 문자열"
 }`;
 
 // 등록된 프로젝트 목록을 LLM 프롬프트용 힌트로. 프로젝트명 + 키워드 예시.
@@ -265,7 +267,15 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
       parsed = JSON.parse(cleanJson(raw));
     } catch (e) {
       console.error("insight parse error", e && e.message);
-      return null;
+      // 파싱 실패해도 원문 첫 문장 + 기타로 저장 (자료 유실 방지)
+      parsed = {
+        kind: "info",
+        category: "기타",
+        project: "",
+        schedule: "",
+        summary: String(body || "").replace(/<\/?[a-zA-Z]+>/g, "").slice(0, 60).trim(),
+        people: ""
+      };
     }
 
     const matchText = cap + " " + fname + " " + body;
@@ -274,9 +284,21 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
     const projects = matchedProjects.length ? matchedProjects : (llmProject ? [llmProject] : []);
     const kind = String(parsed.kind || "").trim();
     const isProject = projects.length || kind === "project";
-    const category = isProject ? "" : normalizeCategory(parsed.category);
+    // project면 category 공란(프로젝트로 분류됨), 아니면 반드시 7개 중 하나 — 비면 "기타".
+    const category = isProject ? "" : (normalizeCategory(parsed.category) || "기타");
     const project = isProject ? (projects[0] || llmProject) : "";
-    const summary = (detectUrgent(matchText) ? "[보고요망] " : "") + String(parsed.summary || "").trim();
+    // 머리표("[보고요망]" 등)를 summary 본문에 박지 않는다. 긴급 표시가 필요하면 출력단에서 처리.
+    let summary = String(parsed.summary || "").trim()
+      .replace(/^\[(보고요망|보고|공유|참고|검토요망|검토|긴급|중요)\]\s*/g, "");
+    if (!summary) {
+      // LLM 요약 실패 시 원문 첫 문장을 정제해 사용 (빈 summary·머리표만 남는 것 방지)
+      summary = String(body || "")
+        .replace(/<\/?[a-zA-Z]+>/g, "")
+        .replace(/^\[(보고요망|보고|공유|참고|검토)\]\s*/g, "")
+        .split(/(?<=[.!?。]|다\.|임\.|음\.)\s+/u)[0]
+        .slice(0, 60)
+        .trim();
+    }
     const meta = parseInfoMeta(body, sender, receivedAt);
 
     if (!summary && !category && !project) return null;
