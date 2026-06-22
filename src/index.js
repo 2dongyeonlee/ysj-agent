@@ -42,6 +42,25 @@ function isAdmin(env, msg) {
   return !!uname && adminUsernames(env).indexOf(uname) !== -1;
 }
 
+// '자료 적재' 메시지 판별: 전달(forward)·공유태그·보고문(장문/다항목)은 '질의'가 아니라
+// 보관용 콘텐츠다. 조용히 수집만 하고 자동으로 브리핑/요약을 띄우지 않는다.
+// (명시적 명령 /info 등이나 봇 멘션·자연어 질문일 때만 응답한다.)
+function isDepositMessage(msg, text) {
+  // 1) 전달된 메시지 — 남이 만든 콘텐츠를 그대로 옮겨 담는 것.
+  if (msg.forward_origin || msg.forward_from || msg.forward_from_chat ||
+      msg.forward_sender_name || msg.forward_date) return true;
+  const t = String(text || "");
+  // 2) 수동 공유 태그('공유:/공유자:/전달: 이름')로 시작.
+  if (/^\s*(?:공유자?|전달자?)\s*[:：]/.test(t)) return true;
+  // 3) 보고문 헤더(<Daily>, <주간> 등)로 시작.
+  if (/^\s*<[^>\n]{1,20}>/.test(t)) return true;
+  // 4) 다항목 브리핑([제목] 섹션 2개 이상).
+  if ((t.match(/^[ \t]*\[[^\]\n]{1,40}\]/gm) || []).length >= 2) return true;
+  // 5) 줄바꿈 있는 장문(질문이 아닌 보고문). 짧은 질의는 통과.
+  if (t.length >= 200 && t.indexOf("\n") !== -1) return true;
+  return false;
+}
+
 // 텔레그램 file_id → 다운로드 URL (R2 이관용). collect.js 의 동일 헬퍼.
 async function getFileUrlPublic(env, fileId) {
   const res = await fetch(
@@ -267,6 +286,10 @@ async function route(env, msg) {
   // text: groups need mention; 1:1 uses natural-language intent classification.
   const isMentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
   const isDM = msg.chat.type === "private";
+
+  // 전달·공유태그·보고문은 '자료 적재'다. 위 collectMessage 로 이미 저장됐으니
+  // 자동 응답(브리핑/요약)은 띄우지 않는다. 단, 봇을 직접 멘션했으면 말을 건 것이므로 응답.
+  if (isDepositMessage(msg, text) && !isMentioned) return;
 
   // Both 1:1 and group-mention go through the SAME natural-language routing,
   // so answers are identical in quality. Group: only when mentioned. 1:1: always.
