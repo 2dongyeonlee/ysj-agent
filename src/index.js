@@ -172,18 +172,35 @@ async function route(env, msg) {
   if (text === "/check" || text.startsWith("/check ")) {
     if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다. /whoami 로 chat_id 확인 후 ADMIN_CHAT_ID 에 등록하세요.");
     const kw = text.replace("/check", "").trim();
-    const rows = await checkInsights(env, kw, 15);
+    const rows = await checkInsights(env, kw, 20);
     if (!rows.length) return sendMessage(env, chatId, "저장된 항목이 없습니다" + (kw ? " ('" + kw + "')" : "") + ".");
-    const lines = ["🔎 <b>저장 점검</b>" + (kw ? " · " + kw : "") + " — " + rows.length + "건", ""];
+
+    // 중복 표시: 같은 dupkey(원문+섹션 동일)가 2건 이상이면 중복. 그룹별로 가장 먼저 들어온 것이 '원본'.
+    const groups = {};
+    for (const r of rows) { (groups[r.dupkey] = groups[r.dupkey] || []).push(r); }
+    let dupGroupCount = 0;
+    for (const k in groups) if (groups[k].length > 1) dupGroupCount++;
+
+    const header = "🔎 <b>저장 점검</b>" + (kw ? " · " + kw : "") + " — " + rows.length + "건" +
+      (dupGroupCount ? " · ⚠️중복 " + dupGroupCount + "그룹" : "");
+    const lines = [header, ""];
     for (const r of rows) {
       const cls = r.project ? ("📁프로젝트:" + r.project)
         : (r.category ? ("🏷대외정보:" + r.category) : "⬜분류없음(내부/미상)");
+      const grp = groups[r.dupkey] || [r];
+      let dupTag = "";
+      if (grp.length > 1) {
+        // id 오름차순으로 가장 작은(먼저 저장된) 것이 원본, 나머지는 중복.
+        const minId = Math.min.apply(null, grp.map(function (x) { return x.id; }));
+        dupTag = (r.id === minId) ? "  ⚠️중복 원본(" + grp.length + "건)" : "  ⚠️중복";
+      }
       const when = String(r.created_at || "").slice(5, 16); // MM-DD HH:MM
-      lines.push("• <b>" + when + "</b> · " + cls);
+      lines.push("• <b>" + when + "</b> · " + cls + dupTag);
       lines.push("   공유자: <b>" + (r.sender || "미상") + "</b> · 경로:" + (r.source_type || "?") + " · ref:" + (r.source_ref || "-"));
       lines.push("   " + String(r.summary || "").replace(/<\/?[a-zA-Z]+>/g, "").slice(0, 60));
       lines.push("");
     }
+    if (dupGroupCount) lines.push("ℹ️ ⚠️중복 = 같은 내용이 여러 번 저장됨(원본 1건 + 중복). 정리가 필요하면 말씀하세요.");
     return sendMessage(env, chatId, lines.join("\n"));
   }
 

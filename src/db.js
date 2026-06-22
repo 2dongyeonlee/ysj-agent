@@ -148,20 +148,48 @@ export async function getInfoInsightsSince(env, sinceIso, categories) {
 }
 
 // 저장 점검(진단용): 최근 insights 를 분류·발신자·경로 그대로 조회. 키워드 있으면 필터.
+// 각 행에 dupkey(중복 판정 키)를 붙인다 — 같은 원문(메시지 텍스트)+같은 섹션이면 중복.
+// (다항목 브리핑의 서로 다른 섹션은 source_ref 의 #N 으로 구분되어 중복으로 오인하지 않는다.)
 export async function checkInsights(env, keyword, limit) {
   const lim = limit || 15;
+  let rows;
   if (keyword) {
     const kw = "%" + String(keyword).replace(/[%_'"\\]/g, " ").trim() + "%";
-    const { results } = await env.DB.prepare(
-      "SELECT created_at, source_type, source_ref, category, project, sender, summary FROM insights " +
+    rows = (await env.DB.prepare(
+      "SELECT id, created_at, source_type, source_ref, category, project, sender, summary FROM insights " +
       "WHERE summary LIKE ? OR people LIKE ? OR sender LIKE ? ORDER BY id DESC LIMIT ?"
-    ).bind(kw, kw, kw, lim).all();
-    return results || [];
+    ).bind(kw, kw, kw, lim).all()).results || [];
+  } else {
+    rows = (await env.DB.prepare(
+      "SELECT id, created_at, source_type, source_ref, category, project, sender, summary FROM insights ORDER BY id DESC LIMIT ?"
+    ).bind(lim).all()).results || [];
   }
-  const { results } = await env.DB.prepare(
-    "SELECT created_at, source_type, source_ref, category, project, sender, summary FROM insights ORDER BY id DESC LIMIT ?"
-  ).bind(lim).all();
-  return results || [];
+
+  // message 원천 행의 원문을 한 번에 조회(중복 판정 근거). 파일/음성은 요약을 근거로.
+  const baseIds = [];
+  for (const r of rows) {
+    if (r.source_type === "message" && r.source_ref) {
+      const base = String(r.source_ref).split("#")[0];
+      if (base && baseIds.indexOf(base) === -1) baseIds.push(base);
+    }
+  }
+  const textById = {};
+  if (baseIds.length) {
+    const ph = baseIds.map(function () { return "?"; }).join(",");
+    const mr = (await env.DB.prepare(
+      "SELECT message_id, text FROM messages WHERE message_id IN (" + ph + ")"
+    ).bind(...baseIds).all()).results || [];
+    for (const m of mr) textById[String(m.message_id)] = m.text || "";
+  }
+  const norm = function (s) { return String(s || "").replace(/\s+/g, "").toLowerCase().slice(0, 160); };
+  for (const r of rows) {
+    const ref = String(r.source_ref || "");
+    const suffix = ref.indexOf("#") !== -1 ? ref.split("#")[1] : "";
+    let basis = r.summary;
+    if (r.source_type === "message" && ref) basis = textById[ref.split("#")[0]] || r.summary;
+    r.dupkey = (r.source_type || "") + "##" + suffix + "##" + norm(basis);
+  }
+  return rows;
 }
 
 export async function getProjectTimeline(env, project, sinceIso) {
