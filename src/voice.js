@@ -34,66 +34,17 @@ function looksBadTranscript(text) {
   return false;
 }
 
-// OpenAI 최대 활용: whisper-1 + verbose_json 으로 세그먼트(시간) 확보.
-// 화자 분리는 OpenAI 미지원이나, 시간 세그먼트가 발화 전환 추정 단서가 된다.
-async function transcribe(env, audioBuf, filename) {
-  const signal = AbortSignal.timeout(90000);
-  const form = new FormData();
-  form.append("file", new Blob([audioBuf]), filename || "audio.ogg");
-  form.append("model", "whisper-1");
-  form.append("language", "ko");
-  form.append("response_format", "verbose_json");
-  form.append("temperature", "0");
-  let res;
-  try {
-    res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-      method: "POST",
-      headers: { "authorization": "Bearer " + env.OPENAI_API_KEY },
-      body: form,
-      signal,
-    });
-  } catch (e) {
-    console.error("STT request error", e && e.message);
-    return await transcribeFallback(env, audioBuf, filename);
-  }
-  if (!res.ok) {
-    const t = await res.text();
-    console.error("STT fail", res.status, t);
-    // verbose_json 실패 시 gpt-4o-transcribe 텍스트로 폴백
-    return await transcribeFallback(env, audioBuf, filename);
-  }
-  let data;
-  try { data = await res.json(); } catch (e) { return { plain: "", timed: "" }; }
-  // 세그먼트를 [mm:ss] 텍스트 형태로 — 시간 흐름·전환을 요약 LLM이 보게.
-  if (data.segments && data.segments.length) {
-    const fmt = function (sec) {
-      const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
-      return ("0" + m).slice(-2) + ":" + ("0" + s).slice(-2);
-    };
-    const lines = data.segments.map(function (seg) {
-      return "[" + fmt(seg.start) + "] " + String(seg.text || "").trim();
-    });
-    const plain = String(data.text || "").trim();
-    if (looksBadTranscript(plain)) {
-      console.error("STT bad transcript, retry fallback");
-      return await transcribeFallback(env, audioBuf, filename);
-    }
-    return { plain, timed: lines.join("\n") };
-  }
-  const plain = String(data.text || "").trim();
-  if (looksBadTranscript(plain)) {
-    console.error("STT bad transcript, retry fallback");
-    return await transcribeFallback(env, audioBuf, filename);
-  }
-  return { plain, timed: plain };
+function timeoutSignal(ms) {
+  const controller = new AbortController();
+  setTimeout(function () { controller.abort("timeout"); }, ms);
+  return controller.signal;
 }
 
-// 폴백: verbose_json 미지원/실패 시 gpt-4o-transcribe 텍스트.
-async function transcribeFallback(env, audioBuf, filename) {
-  const signal = AbortSignal.timeout(90000);
+async function transcribeTextModel(env, audioBuf, filename, model, timeoutMs) {
+  const signal = timeoutSignal(timeoutMs || 25000);
   const form = new FormData();
   form.append("file", new Blob([audioBuf]), filename || "audio.ogg");
-  form.append("model", "gpt-4o-transcribe");
+  form.append("model", model);
   form.append("language", "ko");
   form.append("response_format", "text");
   const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
@@ -102,10 +53,27 @@ async function transcribeFallback(env, audioBuf, filename) {
     body: form,
     signal,
   });
-  if (!res.ok) throw new Error("STT failed " + res.status);
+  if (!res.ok) throw new Error(model + " STT failed " + res.status + ": " + (await res.text()).slice(0, 300));
   const t = (await res.text()).trim();
   if (looksBadTranscript(t)) throw new Error("STT produced unusable transcript");
   return { plain: t, timed: t };
+}
+
+// Worker 실행 시간 안에 끝나는 것을 우선한다. 느린 verbose_json 대신 빠른 텍스트 전사를 먼저 사용.
+async function transcribe(env, audioBuf, filename) {
+  try {
+    return await transcribeTextModel(env, audioBuf, filename, "gpt-4o-transcribe", 24000);
+  } catch (e) {
+    console.error("gpt-4o-transcribe error", e && e.message);
+    if (/abort|timeout/i.test(String((e && (e.name || e.message)) || ""))) throw e;
+  }
+  try {
+    return await transcribeTextModel(env, audioBuf, filename, "gpt-4o-mini-transcribe", 20000);
+  } catch (e) {
+    console.error("gpt-4o-mini-transcribe error", e && e.message);
+    if (/abort|timeout/i.test(String((e && (e.name || e.message)) || ""))) throw e;
+  }
+  return await transcribeTextModel(env, audioBuf, filename, "whisper-1", 20000);
 }
 
 const VOICE_SYSTEM = PERSONA_STYLE + "\n\n" +
