@@ -3,7 +3,8 @@
 import { getProjectTimeline } from "./db.js";
 import { sendMessage } from "./telegram.js";
 
-const NEXUS_SUBS = ["환경재단", "환경연구재단", "환경 연구재단", "AI교육", "문화 C-Project"];
+// 프로젝트별 하위과제는 본문에서 자연스럽게 드러나므로 고정 리스트 미사용.
+const NEXUS_SUBS = [];
 const SEPARATOR = "━━━━━━━━━";
 
 function stripHtml(text) {
@@ -12,9 +13,11 @@ function stripHtml(text) {
 
 function truncateWords(text, max) {
   if (text.length <= max) return text;
-  const head = text.slice(0, max).trim();
+  const head = text.slice(0, max);
+  const sentEnd = head.search(/(?:다|임|음)\.\s|[.!?。]\s/);
+  if (sentEnd > 30) return head.slice(0, sentEnd + 1).trim();
   const cut = head.lastIndexOf(" ");
-  return (cut > 20 ? head.slice(0, cut) : head).trim() + "…";
+  return (cut > 30 ? head.slice(0, cut) : head).trim() + "…";
 }
 
 function firstSentence(text) {
@@ -23,12 +26,13 @@ function firstSentence(text) {
     .replace(/^📄\s*[^🎯\n]+/u, "")
     .replace(/📌\s*핵심\s*/g, "")
     .replace(/🎯\s*핵심:\s*/g, "")
+    .replace(/\[(보고요망|보고|공유|참고|검토요망|검토)\]\s*/g, "")
     .replace(/^[•\-]\s*/g, "")
     .trim();
   const bullet = cleaned.match(/(?:^|\s)•\s*([^•\n]+)/);
   const source = bullet ? bullet[1].trim() : cleaned;
   const sentence = source.split(/(?<=[.!?。]|다\.|임\.|음\.)\s+/u)[0] || source;
-  return truncateWords(sentence, 70);
+  return truncateWords(sentence, 120);
 }
 
 function issueDate(row) {
@@ -88,9 +92,6 @@ function subTasks(text) {
 }
 
 function formatSubTask(sub, text) {
-  if (sub.indexOf("환경") !== -1 && /UNEP|GGGI|2,000억|2000억/.test(text)) {
-    return "  └ 환경재단 2조 (UNEP·GGGI 2,000억)";
-  }
   return "  └ " + sub + " — " + firstSentence(text);
 }
 
@@ -100,11 +101,15 @@ function progressLine(rows) {
   const re = /(\d+(?:\.\d+)?)\s*조/g;
   let m;
   while ((m = re.exec(joined)) !== null) {
-    const n = m[1] + "조";
-    if (nums.indexOf(n) === -1) nums.push(n);
+    const v = parseFloat(m[1]);
+    if (nums.indexOf(v) === -1) nums.push(v);
   }
-  if (nums.length >= 2) return nums[0] + " → " + nums[nums.length - 1];
-  if (nums.length === 1) return nums[0];
+  if (nums.length >= 2) {
+    const min = Math.min.apply(null, nums);
+    const max = Math.max.apply(null, nums);
+    return min + "조 → " + max + "조";
+  }
+  if (nums.length === 1) return nums[0] + "조";
   const first = rows[0] ? firstSentence(rows[0].summary) : "";
   const latest = rows[rows.length - 1] ? firstSentence(rows[rows.length - 1].summary) : "";
   return first && latest && first !== latest ? first + " → " + latest : latest;
@@ -112,7 +117,7 @@ function progressLine(rows) {
 
 function formatGroup(project, rows) {
   const sorted = rows.slice().sort(sortByIssueDate);
-  const lines = ["[<b>" + displayProjectName(project) + "</b>] 염성진 총괄 · TF 6/1 · 토의 단계"];
+  const lines = ["📂 [<b>" + displayProjectName(project) + "</b>]"];
   for (const row of sorted) {
     lines.push("• " + firstSentence(row.summary));
     for (const sub of subTasks(row.summary)) lines.push(formatSubTask(sub, row.summary));
