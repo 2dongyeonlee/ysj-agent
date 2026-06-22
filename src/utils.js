@@ -36,6 +36,14 @@ export function issueDate(row) {
   if (dotted) return Number(dotted[1]) + "/" + Number(dotted[2]);
   const korean = source.match(/(\d{1,2})월\s*(\d{1,2})일/);
   if (korean) return Number(korean[1]) + "/" + Number(korean[2]);
+  // 본문에 날짜가 없으면 등록일(created_at, KST)로 대체 — '[—]' 대신 공유된 날짜 표시.
+  if (row && row.created_at) {
+    const t = Date.parse(String(row.created_at).replace(" ", "T") + "Z");
+    if (!isNaN(t)) {
+      const k = new Date(t + 9 * 3600 * 1000);
+      return (k.getUTCMonth() + 1) + "/" + k.getUTCDate();
+    }
+  }
   return "—";
 }
 
