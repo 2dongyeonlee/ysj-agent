@@ -6,7 +6,7 @@ import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage, senderName } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 import { extractInsight, captionProject, loadProjectKeywords } from "./insight.js";
-import { saveFile } from "./db.js";
+import { saveFile, getFileTextByFileId } from "./db.js";
 import { buildR2Key } from "./collect.js";
 
 async function getFileUrl(env, fileId) {
@@ -111,6 +111,22 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
   if (voice.file_size && voice.file_size > 25 * 1024 * 1024) {
     return sendMessage(env, chatId, "녹음 파일이 너무 큽니다 (25MB 초과). 잘라서 보내주세요.");
   }
+
+  // 같은 녹음을 이미 받아썼으면(같은 file_id) 재전사하지 않고 저장된 전사문으로 요약만 다시 만든다.
+  // (전달 시 자동 처리된 녹음에 "요약"으로 다시 답하면 STT 가 통째로 재실행되던 문제 방지)
+  let cached = "";
+  try { cached = await getFileTextByFileId(env, voice.file_id); } catch (e) { console.error("voice cache lookup error", e && e.message); }
+  if (cached) {
+    if (!replyToUser) return; // 이미 저장됨 — 조용한 수집이면 아무 작업 안 함
+    await sendMessage(env, chatId, "🎙 이미 받아쓴 녹음입니다 — 요약을 다시 만드는 중...");
+    const cachedSummary = await callClaude(
+      env,
+      "아래는 받아쓰기 전문이다. 발화 흐름을 참고해 발화자를 추정하라.\n\n" + cached.slice(0, 16000),
+      VOICE_SYSTEM, MODEL_SMART, 4000
+    );
+    return sendMessage(env, chatId, cachedSummary);
+  }
+
   if (replyToUser) await sendMessage(env, chatId, "🎙 녹음을 받아쓰는 중입니다...");
 
   let transcript, transcriptTimed, audioBuf;

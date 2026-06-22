@@ -43,8 +43,17 @@ export async function saveFile(env, f) {
   ).bind(String(f.chat_id), f.file_id || "", f.r2_key || "", f.filename || "", f.text || "", f.sender || "").run();
 }
 
-export async function searchFiles(env, keyword) {
+// 같은 녹음/파일을 이미 처리해 전사문(text)을 저장해 뒀는지 file_id 로 조회.
+// 있으면 재전사 없이 그 텍스트를 재사용한다.
+export async function getFileTextByFileId(env, fileId) {
+  if (!fileId) return "";
   const { results } = await env.DB.prepare(
+    `SELECT text FROM files WHERE file_id = ? AND text != '' ORDER BY created_at DESC LIMIT 1`
+  ).bind(String(fileId)).all();
+  return (results && results[0] && results[0].text) || "";
+}
+
+export async function searchFiles(env, keyword) {  const { results } = await env.DB.prepare(
     `SELECT file_id, r2_key, filename, text FROM files
      WHERE filename LIKE ? OR text LIKE ? ORDER BY created_at DESC LIMIT 10`
   ).bind(`%${keyword}%`, `%${keyword}%`).all();
@@ -190,6 +199,70 @@ export async function checkInsights(env, keyword, limit) {
     r.dupkey = (r.source_type || "") + "##" + suffix + "##" + norm(basis);
   }
   return rows;
+}
+
+// 중복 insight 정리: 같은 내용이 여러 번 저장된 것을 그룹으로 묶어
+// '가장 먼저 저장된 1건(원본)'만 남기고 나머지를 삭제 대상으로 본다.
+//  - 음성/파일: 같은 source_ref(file_id) = 같은 원본 = 중복
+//  - 메시지: 같은 섹션(#N) + 같은 원문(messages.text 정규화) = 중복
+// execute=false 면 미리보기(계산만), true 면 실제 삭제. 결과 통계를 반환.
+export async function dedupInsights(env, execute) {
+  const rows = (await env.DB.prepare(
+    "SELECT id, source_type, source_ref, summary FROM insights ORDER BY id ASC"
+  ).all()).results || [];
+
+  // 메시지 원천의 원문을 청크로 일괄 조회
+  const baseIds = [];
+  for (const r of rows) {
+    if (r.source_type === "message" && r.source_ref) {
+      const base = String(r.source_ref).split("#")[0];
+      if (base && baseIds.indexOf(base) === -1) baseIds.push(base);
+    }
+  }
+  const textById = {};
+  for (let i = 0; i < baseIds.length; i += 100) {
+    const chunk = baseIds.slice(i, i + 100);
+    const ph = chunk.map(function () { return "?"; }).join(",");
+    const mr = (await env.DB.prepare(
+      "SELECT message_id, text FROM messages WHERE message_id IN (" + ph + ")"
+    ).bind(...chunk).all()).results || [];
+    for (const m of mr) textById[String(m.message_id)] = m.text || "";
+  }
+  const norm = function (s) { return String(s || "").replace(/\s+/g, "").toLowerCase().slice(0, 160); };
+
+  const groups = {};
+  for (const r of rows) {
+    const ref = String(r.source_ref || "");
+    let key;
+    if ((r.source_type === "voice" || r.source_type === "file") && ref) {
+      key = r.source_type + "::ref::" + ref;          // 같은 녹음/파일 = 중복
+    } else if (r.source_type === "message" && ref) {
+      const suffix = ref.indexOf("#") !== -1 ? ref.split("#")[1] : "";
+      const txt = textById[ref.split("#")[0]] || r.summary;
+      key = "message::" + suffix + "::" + norm(txt);   // 같은 섹션+원문 = 중복
+    } else {
+      key = (r.source_type || "") + "::sum::" + norm(r.summary);
+    }
+    (groups[key] = groups[key] || []).push(r);
+  }
+
+  const deleteIds = [];
+  let groupCount = 0;
+  for (const k in groups) {
+    const g = groups[k];
+    if (g.length <= 1) continue;
+    groupCount++;
+    for (let i = 1; i < g.length; i++) deleteIds.push(g[i].id); // g[0]=가장 먼저(원본) 보존
+  }
+
+  if (execute && deleteIds.length) {
+    for (let i = 0; i < deleteIds.length; i += 100) {
+      const chunk = deleteIds.slice(i, i + 100);
+      const ph = chunk.map(function () { return "?"; }).join(",");
+      await env.DB.prepare("DELETE FROM insights WHERE id IN (" + ph + ")").bind(...chunk).run();
+    }
+  }
+  return { total: rows.length, groupCount: groupCount, deleteCount: deleteIds.length };
 }
 
 export async function getProjectTimeline(env, project, sinceIso) {
