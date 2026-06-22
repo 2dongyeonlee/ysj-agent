@@ -16,7 +16,7 @@ import { runReclass } from "./reclass.js";
 const ALLOWED_ADMINS = ["CHANGE_ME"];
 // 대시보드 변수 설정이 막힐 때를 위한 코드 내 관리자 chat_id (예: ["123456789"]).
 // /whoami 로 확인한 본인 chat_id 를 넣으면 대시보드 없이 관리자 권한이 적용된다.
-const ADMIN_CHAT_IDS = ["5965410906"];
+const ADMIN_CHAT_IDS = ["5965410906", "624410079"];
 
 function csv(value) {
   return String(value || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
