@@ -53,6 +53,13 @@ export function buildR2Key(meta) {
   return `${folder}/${date}_${title}_${who}${ext}`;
 }
 
+// 수동 공유자 지정 태그 파싱: 맨 앞 '공유: 이름' / '공유자: 이름' / '전달: 이름' 줄을 떼어 {sharer, rest} 반환.
+function extractSharer(text) {
+  const m = String(text || "").match(/^\s*(?:공유자?|전달자?)\s*[:：]\s*([^\n]{1,20})(?:\n|$)/);
+  if (!m) return { sharer: "", rest: String(text || "") };
+  return { sharer: m[1].trim(), rest: String(text || "").slice(m[0].length) };
+}
+
 // 다항목 브리핑 분리: 줄머리가 [제목] 인 섹션이 2개 이상이면 섹션별 배열로 쪼갠다. 아니면 null.
 // 각 섹션에 브리핑 상단 날짜(m/d)를 prefix 해 일자 정렬이 되게 한다.
 function splitBriefingSections(text) {
@@ -171,29 +178,34 @@ export async function collectMessage(env, msg) {
   }
 
   if (text) {
+    // 수동 공유자 지정: 맨 앞 줄 '공유: 이름' / '공유자: 이름' / '전달: 이름' → 그 사람을 공유자로.
+    const { sharer, rest } = extractSharer(text);
+    const effSender = sharer || sender;
+    const bodyText = (rest && rest.trim().length >= 1) ? rest : text;
+
     await saveMessage(env, {
       chat_id: msg.chat.id,
       message_id: msg.message_id,
-      sender,
-      text: text,
+      sender: effSender,
+      text: bodyText,
     });
     // auto-extract "who was met" into engagements (cheap keyword filter inside)
     try {
-      await maybeExtractEngagement(env, msg, text);
+      await maybeExtractEngagement(env, msg, bodyText);
     } catch (e) {
       console.error("maybeExtractEngagement isolated error", e && e.message);
     }
-    if (text.length >= 20 && INSIGHT_SIGNAL.test(text)) {
+    if (bodyText.length >= 20 && INSIGHT_SIGNAL.test(bodyText)) {
       const baseIns = {
         chatId: msg.chat.id,
         sourceType: "message",
-        sender,
+        sender: effSender,
         caption: msg.caption || "",
         filename: (msg.document && msg.document.file_name) || "",
         receivedAt: msg.date ? new Date(msg.date * 1000) : new Date(),
       };
       // 다항목 브리핑([제목] 섹션 2개 이상)은 섹션별로 분리 저장 → /info 에 각각 노출.
-      const sections = splitBriefingSections(text);
+      const sections = splitBriefingSections(bodyText);
       if (sections) {
         for (let i = 0; i < sections.length; i++) {
           await extractInsight(env, Object.assign({}, baseIns, {
@@ -204,7 +216,7 @@ export async function collectMessage(env, msg) {
       } else {
         await extractInsight(env, Object.assign({}, baseIns, {
           sourceRef: String(msg.message_id),
-          text,
+          text: bodyText,
         }));
       }
     }
