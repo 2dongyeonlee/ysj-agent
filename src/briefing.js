@@ -4,25 +4,30 @@ import { getMessagesSince, getRecentEngagements, getInsightsSince } from "./db.j
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
-import { stripHtml, oneLine, issueDate, senderTag } from "./utils.js";
+import { stripHtml, oneLine, issueDate, issueScore, senderTag } from "./utils.js";
 
 const SEPARATOR = "━━━━━━━━━";
 const INFO_CATEGORIES = ["정부", "국회", "BH", "글로벌", "언론"];
-const INTERNAL_PERSON_RE = /염성진|윤풍영|SK그룹 의장|커뮤니케이션위원장|SK그룹|SKHY|SKALA|Hy-Five|담당 사장|TF 총괄|Steering Committee|협의회|CR팀장|미래전략/;
-const EXTERNAL_AFFIL_RE = /장관|차관|고용노동부|산업통상자원부|산업부|과기부|정부|국회|의원|BH|대통령|총리|엔비디아|CEO|해외|글로벌/;
+const INTERNAL_PERSON_RE = /염성진|윤풍영|SK그룹 의장|커뮤니케이션위원장|SK그룹|SKHY|SKALA|Hy-Five|해당 사장|TF 총괄|Steering Committee|작의장|CR팀|미래전략/;
+const EXTERNAL_AFFIL_RE = /장관|차관|고용노동부|산업통상자원부|산업부|과기부|정부|국회|의원|BH|대통령|총리|비서실|수석|CEO|해외|글로벌/;
+const CHATTER_RE = /^(안녕하세요|감사합니다|네|넵|오 |아 |음|제가 |저장을|따로|보내주신|일정도|최근|여기까지|잘 |좋|맞아요|이해를|가능|\/|@)/;
+const BOT_OUTPUT_RE = /^(📊|🗞|📂|📋|🪪|📄|요약할 내용|권한이 없습니다|현재 제공|안녕하세요\. 무엇을)/;
+const ISSUE_RE = /보고|결정|확인|승인|검토|대응|규제|리스크|면담|간담회|발표|준비|토킹포인트|회의|일정|변경|공유|요청|의견|청취|주재|방침|추진|계획|자료/;
+const DECISION_RE = /결정|확정|승인|확인 필요|보고요망|보고 필요|대응 방침|의견 청취|주재|규제|리스크|요청|준비 필요|검토 필요/;
+const REPORT_RE = /보고|발표|준비|토킹포인트|연설|간담회|행사|O\/I|TF|추진 현황|운영계획/;
 
 const MORNING_SYSTEM = PERSONA_STYLE + "\n\n" +
-  "[작업] 지난 하루 대화를 읽고 사장님이 출근길 30초에 파악하도록 정리. 각 항목 1줄.\n" +
-  "날짜·사람·안건 <b>굵게</b>. 해당 없는 분류는 생략.\n" +
+  "[작업] 지난 하루 대화를 읽고 사장이 출근길 30초에 파악하도록 정리. 각 항목 1줄.\n" +
+  "날짜·사람·안건은 <b>굵게</b>. 해당 없는 분류는 생략.\n" +
   "출력 형식:\n\n" +
   "🗞 <b>아침 브리핑</b>\n\n" +
   "📅 일정\n• 1줄\n\n" +
-  "🚨 의사결정\n• 1줄\n\n" +
+  "⚖️ 의사결정\n• 1줄\n\n" +
   "📌 주요 내용\n• 1줄";
 
 const CONTACT_SYSTEM = PERSONA_STYLE + "\n\n" +
-  "[작업] 최근 사장님이 만난 사람과 나눈 내용을 정리. 미사여구 금지.\n" +
-  "각 줄: • <b>[날짜]</b> <u>이름(소속)</u> — 주제 핵심 한 줄\n" +
+  "[작업] 최근 사장이 만난 사람과 나눈 내용을 정리. 미사여구 금지.\n" +
+  "각 줄: • <b>[날짜]</b> <u>이름(소속)</u> — 주제 핵심 1줄\n" +
   "출력 형식:\n\n" +
   "🤝 <b>면담 이력</b>\n\n" +
   "• <b>[날짜]</b> <u>이름(소속)</u> — 핵심";
@@ -36,34 +41,22 @@ function todayText() {
   return (d.getMonth() + 1) + "/" + d.getDate();
 }
 
-function issueScore(row) {
-  const text = issueDate(row);
-  if (text === "—") return 9999;
-  const parts = text.split("/");
-  const month = parseInt(parts[0], 10);
-  const day = parts[1] ? parseInt(parts[1], 10) : 15;
-  return month * 100 + day;
-}
-
-function sortByImminence(a, b) {
-  const now = new Date();
-  const today = (now.getMonth() + 1) * 100 + now.getDate();
-  return Math.abs(issueScore(a) - today) - Math.abs(issueScore(b) - today);
-}
-
 function textOf(row) {
   return String(row.schedule || "") + " " + String(row.summary || "") + " " + String(row.people || "");
 }
 
-function isOI(row) {
-  return /O\/I|커뮤니케이션총괄 O\/I|사내 보고|운영계획|추진 현황 보고|TF 보고/.test(textOf(row));
+function isUsefulRow(row) {
+  const sender = String(row.sender || "");
+  const summary = stripHtml(row.summary || "");
+  if (!summary || summary.length < 8) return false;
+  if (sender === "Yeom agent") return false;
+  if (CHATTER_RE.test(summary)) return false;
+  if (BOT_OUTPUT_RE.test(summary)) return false;
+  return ISSUE_RE.test(textOf(row));
 }
 
-function isMeetingRow(row) {
-  if (!INFO_CATEGORIES.includes(row.category)) return false;
-  if (isOI(row)) return false;
-  if (!/면담|간담회|환담/.test(textOf(row))) return false;
-  return externalPeople(row).length > 0;
+function isOI(row) {
+  return /O\/I|내부 보고|운영계획|추진 현황 보고|TF 보고/.test(textOf(row));
 }
 
 function externalPeople(row) {
@@ -75,31 +68,53 @@ function externalPeople(row) {
   for (const chunk of chunks) {
     if (INTERNAL_PERSON_RE.test(chunk)) continue;
     if (!EXTERNAL_AFFIL_RE.test(chunk)) continue;
-    const name = (chunk.match(/^([가-힣A-Za-z]+(?:\s+[A-Za-z]+)?)/) || [null, chunk])[1];
-    if (name && out.indexOf(chunk) === -1) out.push(chunk);
+    if (out.indexOf(chunk) === -1) out.push(chunk);
   }
   return out;
 }
 
-function isDecisionRow(row) {
+function isMeetingRow(row) {
+  if (!INFO_CATEGORIES.includes(row.category)) return false;
   if (isOI(row)) return false;
-  return /보고요망|확정|결정|승인|낙점|출범|오픈 예정|예정|확인 필요/.test(textOf(row));
+  if (!/면담|미팅|간담회|환담|오찬|회의/.test(textOf(row))) return false;
+  return externalPeople(row).length > 0;
+}
+
+function isDecisionRow(row) {
+  if (!isUsefulRow(row)) return false;
+  if (isOI(row)) return false;
+  return DECISION_RE.test(textOf(row));
 }
 
 function isReportRow(row) {
-  const text = textOf(row);
-  if (isOI(row)) return true;
-  return /발표|보고|준비|토킹포인트|연설|간담회|행사/.test(text) && /사장|염성진|의장|위원장|운영계획|토킹포인트|발표|연설/.test(text);
+  if (!isUsefulRow(row) && !isOI(row)) return false;
+  return isOI(row) || REPORT_RE.test(textOf(row));
 }
 
 function reportTag(row) {
   return isOI(row) ? "[사내]" : "[외부]";
 }
 
-function reportTitle(row) {
-  const text = stripHtml(row.summary);
-  const title = text.match(/📋\s*([^📌🎯\n]+)/) || text.match(/([^.\n]*O\/I[^.\n]*)/);
-  return title ? title[1].trim() : oneLine(row.summary, 60);
+function byImminence(a, b) {
+  const now = new Date();
+  const today = (now.getMonth() + 1) * 100 + now.getDate();
+  return Math.abs(issueScore(a) - today) - Math.abs(issueScore(b) - today);
+}
+
+function uniqueRows(rows) {
+  const seen = new Set();
+  const out = [];
+  for (const row of rows) {
+    const key = [
+      row.source_ref || "",
+      stripHtml(row.summary || "").replace(/\s+/g, "").slice(0, 80),
+      row.sender || "",
+    ].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
 }
 
 async function sendLongMessage(env, chatId, text) {
@@ -130,60 +145,42 @@ export async function runMorningBriefing(env, replyChatId) {
 }
 
 export async function runBrief(env, chatId) {
-  const INFO_CATS = ["정부", "국회", "BH", "글로벌", "언론"];
-  // 대외정보 (category 있고 project 없는 것)
-  const infoRows = (await getInsightsSince(env, sinceDaysIso(2), { categoryIn: INFO_CATS, projectEmpty: true })) || [];
-  // 프로젝트 (project 있는 것) — 결정·보고 건 소스
-  const projRows = (await getInsightsSince(env, sinceDaysIso(2), { projectNotEmpty: true })) || [];
-  // O/I 등 내부보고 (category 비움, project 비움)
-  const internalRows = ((await getInsightsSince(env, sinceDaysIso(2), { projectEmpty: true })) || [])
-    .filter(function(r) { return !r.category || !INFO_CATS.includes(r.category); });
+  const infoRows = (await getInsightsSince(env, sinceDaysIso(2), { categoryIn: INFO_CATEGORIES, projectEmpty: true })) || [];
+  const projRows = (await getInsightsSince(env, sinceDaysIso(14), { projectNotEmpty: true })) || [];
+  const internalRows = ((await getInsightsSince(env, sinceDaysIso(7), { projectEmpty: true })) || [])
+    .filter(function (r) { return r.category === "내부" || isOI(r); });
 
-  const allRows = [...infoRows, ...projRows, ...internalRows]
-    .filter(function(r) { return r.summary; });
-  const unique = allRows.filter(function(r, i) {
-    return allRows.findIndex(function(x) { return x.source_ref === r.source_ref && r.source_ref; }) === i || !r.source_ref;
-  });
-  if (!unique.length) return sendMessage(env, chatId, "현재 정리된 현안이 없습니다.");
-
-  const decisions = infoRows.filter(isDecisionRow).concat(projRows.filter(isDecisionRow)).slice(0, 5);
-  const meetings = infoRows.filter(isMeetingRow).slice(0, 4);
-  const reports = internalRows.filter(isReportRow).concat(infoRows.filter(isReportRow)).slice(0, 5);
+  const decisions = uniqueRows(infoRows.concat(projRows).filter(isDecisionRow)).sort(byImminence).slice(0, 5);
+  const meetings = uniqueRows(infoRows.filter(isMeetingRow)).sort(byImminence).slice(0, 4);
+  const reports = uniqueRows(internalRows.concat(infoRows).filter(isReportRow)).sort(byImminence).slice(0, 5);
 
   const lines = ["🗞 브리핑 · " + todayText(), SEPARATOR, ""];
   lines.push("🚨 <b>결정·확인 필요</b>");
   if (decisions.length) {
-    for (const row of decisions) {
-      lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
-      lines.push("");
-    }
+    for (const row of decisions) lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
   } else {
     lines.push("• 임박한 결정·확인 필요 건 없음");
-    lines.push("");
   }
+  lines.push("");
 
   lines.push("🤝 <b>만남 (외부)</b>");
   if (meetings.length) {
     for (const row of meetings) {
       const people = externalPeople(row).map(function (p) { return "<b>" + p + "</b>"; }).join(" · ");
       lines.push("• " + people + " (" + issueDate(row) + ")");
-      lines.push("");
     }
   } else {
     lines.push("• 임박한 외부 만남 없음");
-    lines.push("");
   }
+  lines.push("");
 
   lines.push("📋 <b>보고 건</b>");
   if (reports.length) {
-    for (const row of reports) {
-      lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
-      lines.push("");
-    }
+    for (const row of reports) lines.push("• " + reportTag(row) + " [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
   } else {
     lines.push("• 임박한 보고 건 없음");
-    lines.push("");
   }
+  lines.push("");
   lines.push(SEPARATOR);
 
   await sendLongMessage(env, chatId, lines.join("\n"));

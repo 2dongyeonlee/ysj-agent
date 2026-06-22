@@ -6,7 +6,19 @@ import { maybeExtractEngagement } from "./extract.js";
 import { extractInsight, captionProject, loadProjectKeywords } from "./insight.js";
 import { extractText } from "./docparse.js";
 
-const INSIGHT_SIGNAL = /보고|일정|회의|미팅|면담|결정|승인|검토|발표|배포|규제|정책|국회|정부|공정위|산업부|BH|대통령|글로벌|언론|기사|PR|프로젝트|추진|협력|제휴|오찬/;
+const INSIGHT_CONTENT_RE = /보고|일정|회의|미팅|면담|간담회|결정|승인|검토|발표|배포|규제|정책|국회|정부|공정위|산업부|BH|대통령|글로벌|언론|기사|PR|프로젝트|추진|협력|제휴|오찬|자료|요약|공유|요청|의견|청취|리스크|대응|계획|변경|확인|준비|토킹포인트|O\/I|TF|Nexus|넥서스|서남권|용인|Pull-in/i;
+const CHATTER_RE = /^(안녕하세요|감사합니다|네|넵|오 |아 |음|제가 |저장을|따로|보내주신|일정도|최근|여기까지|잘 |좋|맞아요|이해를|가능|\/|@)/;
+const BOT_OUTPUT_RE = /^(📊|🗞|📂|📋|🪪|📄|요약할 내용|권한이 없습니다|현재 제공|안녕하세요\. 무엇을)/;
+
+function shouldExtractInsight(text) {
+  const body = String(text || "").trim();
+  if (body.length < 20) return false;
+  if (CHATTER_RE.test(body)) return false;
+  if (BOT_OUTPUT_RE.test(body)) return false;
+  if (/^\/[A-Za-z가-힣]/.test(body)) return false;
+  if (/^@Yeom_agent_bot\b/.test(body)) return false;
+  return INSIGHT_CONTENT_RE.test(body) || body.length >= 180;
+}
 
 // 텔레그램 file_id → 다운로드 URL (R2 업로드용). docparse 의 내부 헬퍼와 동일.
 async function getFileUrlPublic(env, fileId) {
@@ -206,7 +218,7 @@ export async function collectMessage(env, msg) {
       console.error("dedup check isolated error", e && e.message);
     }
 
-    if (!dupBody && bodyText.length >= 20) {
+    if (!dupBody && shouldExtractInsight(bodyText)) {
       const baseIns = {
         chatId: msg.chat.id,
         sourceType: "message",

@@ -4,7 +4,6 @@ import { getInfoInsightsSince } from "./db.js";
 import { sendMessage } from "./telegram.js";
 import { oneLine, issueDate, issueScore, senderTag, peopleText } from "./utils.js";
 
-// 최근 날짜 먼저, 날짜 미상(—)은 맨 뒤로.
 function recentFirst(a, b) {
   const sa = issueScore(a), sb = issueScore(b);
   const ua = sa === 9999, ub = sb === 9999;
@@ -18,8 +17,6 @@ const INFO_CATEGORIES = [
   { name: "글로벌", icon: "🌐" },
   { name: "국회", icon: "🏛" },
   { name: "언론", icon: "🗞" },
-  { name: "내부", icon: "🏠" },
-  { name: "기타", icon: "📌" },
 ];
 
 const SEPARATOR = "━━━━━━━━━";
@@ -65,8 +62,8 @@ export async function runInfoBriefing(env, chatId, days) {
       const who = peopleText(row);
       const head = who ? "<b>" + who + "</b> — " : "";
       lines.push("• [" + issueDate(row) + "] " + head + oneLine(row.summary) + senderTag(row));
-      lines.push("");
     }
+    lines.push("");
   }
   lines.push(SEPARATOR);
   lines.push("ℹ️ 프로젝트 /project · 핵심 /brief");
