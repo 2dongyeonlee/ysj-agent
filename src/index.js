@@ -73,7 +73,7 @@ async function getFileUrlPublic(env, fileId) {
 
 const HELP =
   "📋 <b>사용 안내</b>\n\n" +
-  "자료·녹음을 보내면 자동 저장·분류됩니다.\n" +
+  "자료는 자동 저장·분류되고, 녹음은 바로 회의록으로 작성됩니다.\n" +
   "궁금한 건 그냥 말씀하시면 됩니다.\n\n" +
   "<b>명령어</b>\n" +
   "• /brief — 오늘 챙길 것 (결정·만남·보고 건)\n" +
@@ -328,7 +328,7 @@ async function route(env, msg) {
     return runProjectBriefing(env, chatId, days, name);
   }
   if (text.startsWith("/summary")) {
-    // 녹음이 함께 왔거나 reply 대상이 녹음이면 → 회의록 요약(handleVoice)로.
+    // 녹음이 함께 왔거나 reply 대상이 녹음이면 → 회의록 작성(handleVoice)으로.
     if (isAudioMsg(msg)) { await collectMessage(env, msg); return handleVoice(env, chatId, msg, true); }
     if (isAudioMsg(msg.reply_to_message)) return handleVoice(env, chatId, msg.reply_to_message, true);
     const kw = text.replace("/summary", "").trim();
@@ -354,10 +354,8 @@ async function route(env, msg) {
   await collectMessage(env, msg);
 
   if (selfAudio) {
-    const mentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
-    // DM·멘션·또는 캡션에 요약/정리/회의록 의도가 있으면 즉시 회의록 요약.
-    const want = mentioned || msg.chat.type === "private" || /요약|정리|회의록|summary/i.test(text);
-    await handleVoice(env, chatId, msg, want);
+    // 녹음 파일은 명령어 없이도 바로 회의록을 작성한다.
+    await handleVoice(env, chatId, msg, true);
     return;
   }
   if (msg.document || (msg.photo && msg.photo.length)) {
@@ -366,8 +364,8 @@ async function route(env, msg) {
     return;
   }
 
-  // reply 대상이 녹음이고, 사용자가 요약/정리를 요청하면 → 그 녹음을 회의록 요약.
-  if (repliedAudio && /요약|정리|회의록|summary/i.test(text)) {
+  // reply 대상이 녹음이고, 사용자가 회의록/정리/요약을 요청하면 → 그 녹음 회의록 작성.
+  if (repliedAudio && /회의록|녹취|받아쓰기|정리|요약|summary/i.test(text)) {
     return handleVoice(env, chatId, msg.reply_to_message, true);
   }
 

@@ -1,5 +1,5 @@
 // voice.js — voice note -> STT (OpenAI whisper-1 verbose, fallback gpt-4o-transcribe)
-//            -> 분류·R2 백업·저장 -> Claude 리치 요약 -> Telegram.
+//            -> 분류·R2 백업·저장 -> 회의록 작성 -> Telegram.
 // STT provider isolated in transcribe() for later swap (e.g. CLOVA).
 
 import { callClaude, MODEL_SMART } from "./claude.js";
@@ -76,22 +76,25 @@ async function transcribeFallback(env, audioBuf, filename) {
 }
 
 const VOICE_SYSTEM = PERSONA_STYLE + "\n\n" +
-  "[작업] 아래는 회의/간담회 녹음을 받아쓴 전문(全文)이다. 염 사장이 회의에 안 들어가고도 전체를 파악할 수 있도록 충실하고 상세하게 정리하라.\n\n" +
+  "[작업] 아래는 회의/간담회 녹음을 받아쓴 전문(全文)이다. 이것은 요약이 아니라 회의록이다. 염 사장이 회의에 안 들어가고도 논의 흐름, 쟁점, 결정, 후속 조치를 복원할 수 있도록 충실하고 상세하게 작성하라.\n\n" +
   "[원칙]\n" +
-  "- 절대 짧게 줄이지 마라. 제목·개요만 쓰지 말고, 오간 내용을 구체적으로 담아라.\n" +
+  "- '요약'이라는 제목이나 표현을 쓰지 마라. 출력물의 성격은 반드시 '회의록'이다.\n" +
+  "- 짧게 줄이지 마라. 제목·개요만 쓰지 말고, 실제로 오간 내용을 안건별로 구체적으로 담아라.\n" +
   "- 발화자가 여러 명이면 화자별로 누가 어떤 입장·의견을 냈는지 구분하라. 이름이 안 나오면 화자A·화자B·화자C로 구분하되, 직책·맥락으로 추정되면 (추정) 표기와 함께 명시하라.\n" +
   "- 받아쓰기에 없는 내용을 지어내지 마라. 불명확하면 '불명확'으로 표기하라.\n" +
-  "- 숫자·날짜·금액·고유명사(인명·기관·프로젝트명)는 빠짐없이 그대로 살려라.\n\n" +
-  "[출력 형식] (HTML 볼드, 섹션 사이 빈 줄. 각 항목은 충분히 길게, 불릿 여러 개 허용)\n\n" +
-  "🎙 <b>녹음 요약</b>\n\n" +
-  "📅 <b>일시·장소·맥락</b>\n• {언제, 어디서, 무슨 자리인지. 회의 성격}\n\n" +
-  "🗂 <b>주요 안건</b>\n• {다뤄진 안건을 항목별로 나열. 안건마다 한 줄씩}\n\n" +
-  "🗣 <b>발화자별 입장·의견</b>\n• <b>{화자/직책}</b>: {그가 낸 핵심 주장·의견·우려를 구체적으로. 한 명이 여러 발언이면 여러 불릿}\n\n" +
-  "💬 <b>안건별 논의 내용</b>\n• <b>{안건1}</b>: {찬반·쟁점·오간 논의를 상세히}\n• <b>{안건2}</b>: {...}\n\n" +
-  "✅ <b>의사결정 사항</b>\n• {확정된 결정. 없으면 '확정된 결정 없음, 검토 단계'}\n\n" +
-  "📌 <b>Action Item</b>\n• {누가 / 무엇을 / 언제까지. 담당·기한 최대한 명시. 여러 개면 모두}\n\n" +
-  "⚠️ <b>확인·보고 필요</b>\n• {염 사장이 추가 확인하거나 보고해야 할 사항}\n\n" +
-  "🗒 <b>발언 전문(주요 부분)</b>\n{핵심 발언을 발화자 표시와 함께 길게 발췌}";
+  "- 숫자·날짜·금액·고유명사(인명·기관·프로젝트명)는 빠짐없이 그대로 살려라.\n" +
+  "- 확정된 결정과 검토/논의 중인 사항을 반드시 구분하라.\n" +
+  "- Action Item은 담당자, 해야 할 일, 기한이 들리면 반드시 분리해 적어라.\n\n" +
+  "[출력 형식] HTML bold 사용. 섹션 제목과 순서는 반드시 유지. 각 섹션 사이 빈 줄.\n\n" +
+  "📝 <b>녹음 회의록</b>\n\n" +
+  "📅 <b>회의 정보</b>\n• 일시: {녹음에서 확인되면 기재, 없으면 불명확}\n• 장소/방식: {확인되면 기재, 없으면 불명확}\n• 회의 성격: {회의/간담회/보고/논의 등}\n\n" +
+  "👥 <b>참석·발화자</b>\n• <b>{이름/직책}</b>: {역할 또는 발언 맥락}\n• <b>화자A</b>: {이름 불명확 시 역할/입장}\n\n" +
+  "🗂 <b>논의 안건</b>\n• {안건 1}\n• {안건 2}\n• {안건 3}\n\n" +
+  "💬 <b>상세 회의록</b>\n• <b>{안건 1}</b>: {논의 배경, 주요 발언, 쟁점, 반론, 우려, 정리 방향을 상세히}\n• <b>{안건 2}</b>: {같은 방식으로 상세히}\n\n" +
+  "✅ <b>결정사항</b>\n• {확정된 결정만. 없으면 '확정된 결정 없음'}\n\n" +
+  "📌 <b>후속 조치</b>\n• {담당자}: {해야 할 일} / {기한 또는 시점}\n• {담당·기한이 불명확하면 불명확으로 표시}\n\n" +
+  "⚠️ <b>확인 필요</b>\n• {염 사장이 확인하거나 보고받아야 할 내용}\n\n" +
+  "🗒 <b>주요 발언</b>\n• <b>{화자}</b>: \"{회의록에 필요한 핵심 발언을 원문 취지에 가깝게}\"";
 
 // 녹음 메시지에서 오디오 객체 추출 (mime 또는 파일 확장자로 판별).
 export function pickAudio(msg) {
@@ -112,7 +115,7 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
     return sendMessage(env, chatId, "녹음 파일이 너무 큽니다 (25MB 초과). 잘라서 보내주세요.");
   }
 
-  if (replyToUser) await sendMessage(env, chatId, "🎙 녹음을 받아쓰는 중입니다...");
+  if (replyToUser) await sendMessage(env, chatId, "🎙 녹음을 받아쓰고 회의록을 작성하는 중입니다...");
 
   let transcript, transcriptTimed, audioBuf;
   try {
@@ -183,7 +186,7 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
   }
 
   if (!replyToUser) return; // silent store only
-  const forSummary = (transcriptTimed || transcript || "").slice(0, 16000);
-  const summary = await callClaude(env, "아래는 [시간] 발화 형식의 받아쓰기 전문이다. 시간 흐름과 발화 전환을 참고해 발화자를 추정하라.\n\n" + forSummary, VOICE_SYSTEM, MODEL_SMART, 4000);
-  await sendMessage(env, chatId, summary);
+  const transcriptForMinutes = (transcriptTimed || transcript || "").slice(0, 16000);
+  const minutes = await callClaude(env, "아래는 [시간] 발화 형식의 받아쓰기 전문이다. 시간 흐름과 발화 전환을 참고해 회의록을 작성하라.\n\n" + transcriptForMinutes, VOICE_SYSTEM, MODEL_SMART, 4000);
+  await sendMessage(env, chatId, minutes);
 }
