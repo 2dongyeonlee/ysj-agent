@@ -322,9 +322,13 @@ async function route(env, msg) {
   }
   if (text.startsWith("/project")) {
     const arg = text.replace("/project", "").trim();
-    let days = 7, name = arg;
-    const mNum = arg.match(/(\d+)/);
-    if (mNum) { days = parseInt(mNum[1], 10); name = arg.replace(mNum[1], "").trim(); }
+    let days = 7, name = "";
+    if (/^\d+$/.test(arg)) {
+      days = parseInt(arg, 10);
+    } else if (arg) {
+      days = null;
+      name = arg;
+    }
     return runProjectBriefing(env, chatId, days, name);
   }
   if (text.startsWith("/summary")) {

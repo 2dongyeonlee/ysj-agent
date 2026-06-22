@@ -1,12 +1,11 @@
-// project.js - grouped project briefing from structured insights.
+// project.js - compact project index and per-project item list.
 
-import { getProjectTimeline, getSubtasks } from "./db.js";
+import { getProjectTimeline } from "./db.js";
 import { sendMessage } from "./telegram.js";
-import { stripHtml, oneLine, issueDate, sortByIssueDate, senderTag } from "./utils.js";
+import { stripHtml, oneLine, issueDate, issueScore, senderTag } from "./utils.js";
 
-// 하위과제는 DB(project_subtasks)에서 프로젝트별로 조회 (하드코딩 제거)
-// 공통 요약·날짜·정렬 함수는 utils.js 단일 소스 사용.
 const SEPARATOR = "━━━━━━━━━";
+const NOISE_RE = /지원 파일 형식|요약할 내용|권한이 없습니다|원문이 없습니다|^\s*$/;
 
 function normalizeProjectName(project) {
   const p = String(project || "").trim();
@@ -15,19 +14,39 @@ function normalizeProjectName(project) {
 }
 
 function displayProjectName(project) {
-  return normalizeProjectName(project) === "nexus" ? "넥서스" : project;
+  return normalizeProjectName(project) === "nexus" ? "넥서스" : String(project || "").trim();
 }
 
-function subTasks(text, subList) {
-  const found = [];
-  for (const sub of (subList || [])) {
-    if (sub && String(text || "").indexOf(sub) !== -1 && found.indexOf(sub) === -1) found.push(sub);
+function projectSlug(project) {
+  return displayProjectName(project).replace(/<[^>]+>/g, "").trim();
+}
+
+function cleanRows(rows) {
+  const seen = new Set();
+  const out = [];
+  for (const row of rows || []) {
+    const summary = stripHtml(row.summary || "");
+    if (!row.project || !summary || NOISE_RE.test(summary)) continue;
+    const key = [
+      normalizeProjectName(row.project),
+      row.source_ref || "",
+      summary.replace(/\s+/g, "").slice(0, 100),
+    ].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
   }
-  return found;
+  return out;
 }
 
-function formatSubTask(sub, text) {
-  return "  └ " + sub + " — " + oneLine(text);
+function sortRows(a, b) {
+  const sa = issueScore(a), sb = issueScore(b);
+  if (sa !== sb) return sa - sb;
+  return String(a.created_at || "").localeCompare(String(b.created_at || ""));
+}
+
+function recentRows(rows, count) {
+  return rows.slice().sort(sortRows).slice(-count);
 }
 
 function progressLine(rows) {
@@ -48,23 +67,52 @@ function progressLine(rows) {
   return "";
 }
 
-// 그룹번호(1,2..) + 항목번호(1-1,1-2..) 부여. {text, map(tag->row)} 반환.
-function formatGroup(groupNo, project, rows, subList) {
-  const sorted = rows.slice().sort(sortByIssueDate);
-  const lines = [groupNo + ". 📂 [<b>" + displayProjectName(project) + "</b>]", ""];
-  const map = {};
+function formatItem(tag, row, brief) {
+  const limit = brief ? 72 : 90;
+  return "  <b>" + tag + "</b> [" + issueDate(row) + "] " + oneLine(row.summary, limit) + senderTag(row);
+}
+
+function addMapEntry(map, tag, row) {
+  map[tag] = {
+    ref: row.source_ref || "",
+    summary: row.summary || "",
+    project: displayProjectName(row.project || ""),
+    date: issueDate(row),
+  };
+}
+
+function formatOverviewGroup(groupNo, project, rows, map) {
+  const sorted = rows.slice().sort(sortRows);
+  const shown = recentRows(sorted, 2);
+  const lines = [groupNo + ". 📂 [<b>" + displayProjectName(project) + "</b>]"];
+  let itemNo = 0;
+  for (const row of shown) {
+    itemNo++;
+    const tag = groupNo + "-" + itemNo;
+    addMapEntry(map, tag, row);
+    lines.push(formatItem(tag, row, true));
+  }
+  const prog = progressLine(sorted);
+  if (prog) lines.push("  🔍 경과: " + prog);
+  lines.push("  전체 보기: <code>/project " + projectSlug(project) + "</code>");
+  lines.push("");
+  return lines.join("\n");
+}
+
+function formatFullGroup(groupNo, project, rows, map) {
+  const sorted = rows.slice().sort(sortRows);
+  const lines = [groupNo + ". 📂 [<b>" + displayProjectName(project) + "</b>] · 전체 " + sorted.length + "건", ""];
   let itemNo = 0;
   for (const row of sorted) {
     itemNo++;
     const tag = groupNo + "-" + itemNo;
-    map[tag] = row;
-    lines.push("  <b>" + tag + "</b> [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
-    for (const sub of subTasks(row.summary, subList)) lines.push(formatSubTask(sub, row.summary));
+    addMapEntry(map, tag, row);
+    lines.push(formatItem(tag, row, false));
   }
   const prog = progressLine(sorted);
   if (prog) lines.push("  🔍 경과: " + prog);
-  lines.push(""); // 그룹 사이 빈 줄
-  return { text: lines.join("\n"), map: map };
+  lines.push("");
+  return lines.join("\n");
 }
 
 async function sendLongMessage(env, chatId, text) {
@@ -83,11 +131,12 @@ async function sendLongMessage(env, chatId, text) {
 }
 
 export async function runProjectBriefing(env, chatId, days, name) {
+  const hasName = !!String(name || "").trim();
   const sinceIso = days ? new Date(Date.now() - days * 86400000).toISOString() : null;
   const rows = await getProjectTimeline(env, name || "", sinceIso);
-  const filtered = (rows || []).filter(function (r) { return r.project; }).sort(sortByIssueDate);
+  const filtered = cleanRows(rows).sort(sortRows);
   if (!filtered.length) {
-    if (chatId) await sendMessage(env, chatId, "최근 정리된 프로젝트 현황이 없습니다.");
+    if (chatId) await sendMessage(env, chatId, hasName ? "해당 프로젝트 자료가 없습니다." : "최근 1주일간 공유된 프로젝트 자료가 없습니다.");
     return;
   }
 
@@ -98,28 +147,29 @@ export async function runProjectBriefing(env, chatId, days, name) {
     groups[key].push(row);
   }
 
-  const keys = Object.keys(groups).sort();
-  const lines = ["📂 <b>프로젝트</b>", SEPARATOR, ""];
+  const keys = Object.keys(groups).sort(function (a, b) { return displayProjectName(a).localeCompare(displayProjectName(b), "ko"); });
+  const lines = [
+    "📂 <b>프로젝트</b>" + (hasName ? " · " + displayProjectName(name) : " · 최근 1주일"),
+    SEPARATOR,
+    "",
+  ];
   const fullMap = {};
   let groupNo = 0;
   for (const key of keys) {
     groupNo++;
-    const subList = await getSubtasks(env, displayProjectName(key));
-    const g = formatGroup(groupNo, key, groups[key], subList);
-    lines.push(g.text);
-    for (const tag in g.map) {
-      const r = g.map[tag];
-      fullMap[tag] = { ref: r.source_ref || "", summary: r.summary || "", project: r.project || "", date: issueDate(r) };
-    }
+    lines.push(hasName
+      ? formatFullGroup(groupNo, key, groups[key], fullMap)
+      : formatOverviewGroup(groupNo, key, groups[key], fullMap));
   }
   lines.push(SEPARATOR);
   lines.push("ℹ️ 대외정보 /info · 핵심 /brief");
-  lines.push("💡 항목 보기: <code>1-1 요약</code> 또는 <code>1-1 자료</code>");
+  lines.push(hasName
+    ? "💡 항목 보기: <code>1-1 요약</code> 또는 <code>1-1 자료</code>"
+    : "💡 전체 목록: <code>/project 프로젝트명</code> · 항목 보기: <code>1-1 요약</code>");
 
-  // 번호→항목 매핑을 KV에 10분 저장(chatId별). 직후 번호 입력에 사용.
   if (chatId) {
     try {
-      await env.STATE.put("projmap:" + chatId, JSON.stringify(fullMap), { expirationTtl: 600 });
+      await env.STATE.put("projmap:" + chatId, JSON.stringify(fullMap), { expirationTtl: 1800 });
     } catch (e) { console.error("projmap save", e && e.message); }
   }
 

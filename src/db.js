@@ -274,7 +274,7 @@ export async function getProjectTimeline(env, project, sinceIso) {
   const { results } = await env.DB.prepare(
     "SELECT i.schedule, i.project, i.summary, i.people, i.sender, i.created_at, i.source_ref, " +
     "(SELECT filename FROM files f WHERE f.file_id = i.source_ref ORDER BY id DESC LIMIT 1) AS filename " +
-    "FROM insights i WHERE " + where + " ORDER BY lower(i.project), i.created_at ASC LIMIT 50"
+    "FROM insights i WHERE " + where + " ORDER BY lower(i.project), i.created_at ASC LIMIT 200"
   ).bind(...binds).all();
   return results || [];
 }
