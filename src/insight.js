@@ -3,6 +3,7 @@
 
 import { callClaude, MODEL_FAST } from "./claude.js";
 import { getProjectKeywords, updateInsightDone } from "./db.js";
+import { stripSalutation } from "./utils.js";
 
 const INFO_CATEGORIES = ["정부", "국회", "BH", "글로벌", "언론", "내부", "기타"];
 
@@ -32,7 +33,7 @@ decision·followup 컬럼은 사용하지 않는다. 결정사항은 summary에 
   "category": "정부, 국회, BH, 글로벌, 언론, 내부, 기타 중 하나. 반드시 채운다(빈 값 금지). kind가 project면 빈 문자열",
   "project": "프로젝트명. nexus/넥서스는 nexus. kind가 project가 아니면 빈 문자열",
   "schedule": "날짜+안건. 없으면 빈 문자열",
-  "summary": "30자 이내 핵심 1줄. 불릿(•)·이모지·📋·📌·제목 형식 금지. 완성된 짧은 서술문으로.",
+  "summary": "핵심 1줄(40자 안팎). 무엇을·왜·언제(있으면)를 담은 완성된 서술문. 인사말('사장님' 등 호칭)·머리표·불릿·이모지·제목 형식 금지. '사장님'으로 시작 금지. 보고문의 인사말은 빼고 실제 내용만 요약. 핵심 정보(일시·장소·대상)가 본문에 없으면 '(확인 필요)'로 표기.",
   "people": "관련 인물·소속을 최대한 구체적으로(이름+직책/소속). 대면·면담·발언 자료는 누가 등장하는지 반드시 추출. 없으면 빈 문자열"
 }`;
 
@@ -316,14 +317,15 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
     // project면 category 공란(프로젝트로 분류됨), 아니면 반드시 7개 중 하나 — 비면 "기타".
     const category = isProject ? "" : classifyInfoCategory(matchText, parsed.category);
     const project = isProject ? (projects[0] || llmProject) : "";
-    // 머리표("[보고요망]" 등)를 summary 본문에 박지 않는다. 긴급 표시가 필요하면 출력단에서 처리.
-    let summary = String(parsed.summary || "").trim()
-      .replace(/^\[(보고요망|보고|공유|참고|검토요망|검토|긴급|중요)\]\s*/g, "");
+    // 머리표("[보고요망]" 등)·인사말("사장님" 등)을 summary 본문에 박지 않는다.
+    let summary = stripSalutation(String(parsed.summary || "").trim()
+      .replace(/^\[(보고요망|보고|공유|참고|검토요망|검토|긴급|중요)\]\s*/g, ""));
     if (!summary) {
-      // LLM 요약 실패 시 원문 첫 문장을 정제해 사용 (빈 summary·머리표만 남는 것 방지)
-      summary = String(body || "")
+      // LLM 요약 실패 시 원문에서 인사말을 떼고 첫 문장을 정제해 사용
+      summary = stripSalutation(String(body || "")
         .replace(/<\/?[a-zA-Z]+>/g, "")
         .replace(/^\[(보고요망|보고|공유|참고|검토)\]\s*/g, "")
+        .trim())
         .split(/(?<=[.!?。]|다\.|임\.|음\.)\s+/u)[0]
         .slice(0, 60)
         .trim();

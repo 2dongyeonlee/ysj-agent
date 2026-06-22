@@ -4,6 +4,15 @@ export function stripHtml(text) {
   return String(text || "").replace(/<\/?[a-zA-Z]+>/g, "").replace(/\s+/g, " ").trim();
 }
 
+// 앞쪽 호칭·인사말(사장님/위원장님/회장님 …)을 제거. "사장님," "사장님." "○○위원장님께" 등.
+// 보고문이 인사말로 시작해 요약 첫 문장이 "사장님."만 남는 것을 막는다.
+export function stripSalutation(text) {
+  let t = String(text || "").trim();
+  const sal = /^(사장님|위원장님|회장님|의장님|부사장님|대표님|차관님|장관님|위원님)\s*(께서|께|에게)?\s*[,.，．:：·ㆍ\-–—]?\s*/;
+  for (let i = 0; i < 3 && sal.test(t); i++) t = t.replace(sal, "").trim();
+  return t || String(text || "").trim();
+}
+
 export function oneLine(text, limit = 90) {
   const cleaned = stripHtml(text)
     .replace(/^📄\s*[^🎯\n]+/u, "")
@@ -14,8 +23,8 @@ export function oneLine(text, limit = 90) {
     .replace(/^[•\-]\s*/g, "")
     .trim();
   const bullet = cleaned.match(/(?:^|\s)•\s*([^•\n]+)/);
-  const source = bullet ? bullet[1].trim() : cleaned;
-  const sentence = source.split(/(?<=[.!?。！？])\s+/u)[0] || source;
+  const source = stripSalutation(bullet ? bullet[1].trim() : cleaned);
+  const sentence = stripSalutation(source.split(/(?<=[.!?。！？])\s+/u)[0] || source);
   const out = sentence.trim();
   if (out.length <= limit) return out;
   const cut = out.slice(0, limit + 1);
