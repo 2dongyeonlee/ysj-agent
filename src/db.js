@@ -147,6 +147,39 @@ export async function getInsightsSince(env, sinceIso, filter) {
   return results || [];
 }
 
+// 재요약 대상: 최근 insights + 원문(messages.text / files.text). 원문 있는 것만 재요약 가능.
+// onlyThin=true 면 요약이 짧거나 막연한(빈약한) 것만 대상으로.
+export async function getResummaryTargets(env, limit, onlyThin) {
+  const lim = limit || 25;
+  const rows = (await env.DB.prepare(
+    "SELECT id, source_type, source_ref, summary, category, project, " +
+    "(SELECT text FROM messages m WHERE m.message_id = CASE WHEN instr(insights.source_ref, '#') > 0 THEN substr(insights.source_ref, 1, instr(insights.source_ref, '#') - 1) ELSE insights.source_ref END ORDER BY created_at DESC LIMIT 1) AS raw_message, " +
+    "(SELECT text FROM files f WHERE f.file_id = insights.source_ref ORDER BY id DESC LIMIT 1) AS raw_file " +
+    "FROM insights ORDER BY id DESC LIMIT ?"
+  ).bind(onlyThin ? lim * 4 : lim).all()).results || [];
+  const out = [];
+  for (const r of rows) {
+    const raw = String(r.raw_message || r.raw_file || "").trim();
+    if (raw.length < 20) continue;                 // 원문 없으면 재요약 불가
+    if (onlyThin) {
+      const s = String(r.summary || "").replace(/\s+/g, "");
+      const thin = s.length < 18 || /확인 필요|내용 확인|^사장님|발표 예정$|보고$|보고임$/.test(String(r.summary || ""));
+      if (!thin) continue;
+    }
+    out.push(r);
+    if (out.length >= lim) break;
+  }
+  return out;
+}
+
+export async function updateInsightSummary(env, id, summary, people, schedule) {
+  await env.DB.prepare(
+    "UPDATE insights SET summary = ?, " +
+    "people = CASE WHEN ? != '' THEN ? ELSE people END, " +
+    "schedule = CASE WHEN ? != '' THEN ? ELSE schedule END WHERE id = ?"
+  ).bind(String(summary || "").slice(0, 500), people || "", people || "", schedule || "", schedule || "", id).run();
+}
+
 export async function getInfoInsightsSince(env, sinceIso, categories) {
   const list = (categories && categories.length) ? categories : ["정부", "국회", "BH", "글로벌", "언론"];
   const ph = list.map(function () { return "?"; }).join(",");

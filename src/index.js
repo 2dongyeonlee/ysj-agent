@@ -9,7 +9,9 @@ import { handleVoice } from "./voice.js";
 import { classifyIntent } from "./intent.js";
 import { sendMessage, sendDocument, sendDocumentBytes } from "./telegram.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
-import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks, checkInsights, dedupInsights } from "./db.js";
+import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks, checkInsights, dedupInsights, getResummaryTargets, updateInsightSummary } from "./db.js";
+import { resummarizeText } from "./insight.js";
+import { splitBriefingSections } from "./collect.js";
 import { runReclass } from "./reclass.js";
 
 // 권한자 인식. (1) chat_id 기반: ADMIN_CHAT_ID 또는 BRIEFING_TARGET_ID 채팅 — @username
@@ -233,6 +235,48 @@ async function route(env, msg) {
     return sendMessage(env, chatId,
       "✅ <b>중복 정리 완료</b>\n" +
       "• 삭제 " + res.deleteCount + "건 · 보존 " + (res.total - res.deleteCount) + "건 (전체 " + res.total + " → " + (res.total - res.deleteCount) + ")");
+  }
+
+  // 기존 항목 재요약(권한자만): 원문을 다시 읽어 빈약한 요약을 구체적으로 교체. 분류는 그대로.
+  //  /resummary        → 빈약한 요약만 재작성(원문 있는 것, 최대 20건)
+  //  /resummary 전체   → 빈약 여부 무관 최근 20건 재작성
+  if (text === "/resummary" || text.startsWith("/resummary ")) {
+    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다. /whoami 로 chat_id 확인 후 ADMIN_CHAT_ID 에 등록하세요.");
+    const arg = text.replace("/resummary", "").trim();
+    const all = (arg === "전체" || arg === "all");
+    let targets;
+    try {
+      targets = await getResummaryTargets(env, 20, !all);
+    } catch (e) {
+      console.error("resummary targets error", (e && e.stack) || e);
+      return sendMessage(env, chatId, "⚠️ 재요약 대상 조회 중 오류: " + ((e && e.message) || e));
+    }
+    if (!targets.length) return sendMessage(env, chatId, "재요약할 항목이 없습니다(원문이 남아있는 빈약한 요약이 없음). 전체 대상은 <code>/resummary 전체</code>.");
+    await sendMessage(env, chatId, "🔧 재요약 시작 — 대상 " + targets.length + "건(원문 기준). 잠시 후 결과를 알려드립니다…");
+    let ok = 0, fail = 0;
+    for (const t of targets) {
+      try {
+        let raw = String(t.raw_message || t.raw_file || "");
+        // 다항목 브리핑의 섹션(#N)이면 해당 섹션 텍스트만 재요약.
+        const ref = String(t.source_ref || "");
+        if (ref.indexOf("#") !== -1 && t.raw_message) {
+          const n = parseInt(ref.split("#")[1], 10);
+          const secs = splitBriefingSections(t.raw_message);
+          if (secs && secs[n - 1]) raw = secs[n - 1];
+        }
+        const r = await resummarizeText(env, raw);
+        if (r && r.summary && r.summary !== t.summary) {
+          await updateInsightSummary(env, t.id, r.summary, r.people, r.schedule);
+          ok++;
+        }
+      } catch (e) {
+        console.error("resummary item error", t.id, e && e.message);
+        fail++;
+      }
+    }
+    return sendMessage(env, chatId,
+      "✅ <b>재요약 완료</b>\n• 갱신 " + ok + "건" + (fail ? " · 실패 " + fail + "건" : "") +
+      "\n남은 빈약 항목이 있으면 <code>/resummary</code> 를 다시 보내세요. (분류는 그대로, 요약만 개선)");
   }
 
   // 프로젝트 키워드 관리 (권한자만)

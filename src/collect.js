@@ -75,7 +75,7 @@ function extractSharer(text) {
 
 // 다항목 브리핑 분리: 줄머리가 [제목] 인 섹션이 2개 이상이면 섹션별 배열로 쪼갠다. 아니면 null.
 // 각 섹션에 브리핑 상단 날짜(m/d)를 prefix 해 일자 정렬이 되게 한다.
-function splitBriefingSections(text) {
+export function splitBriefingSections(text) {
   const body = String(text || "");
   const patterns = [
     /^[ \t]*\[[^\]\n]{1,40}\]/gm,
