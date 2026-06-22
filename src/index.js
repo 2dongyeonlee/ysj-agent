@@ -9,7 +9,7 @@ import { handleVoice } from "./voice.js";
 import { classifyIntent } from "./intent.js";
 import { sendMessage, sendDocument, sendDocumentBytes } from "./telegram.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
-import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks } from "./db.js";
+import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks, checkInsights } from "./db.js";
 import { runReclass } from "./reclass.js";
 
 // 권한자 인식. (1) chat_id 기반: ADMIN_CHAT_ID 또는 BRIEFING_TARGET_ID 채팅 — @username
@@ -164,6 +164,27 @@ async function route(env, msg) {
   if (text === "/reclass" || text.startsWith("/reclass ")) {
     if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다. /whoami 로 chat_id 확인 후 ADMIN_CHAT_ID 에 등록하세요.");
     return runReclass(env, chatId, text.indexOf("reset") !== -1);
+  }
+
+  // 저장 점검(진단용, 권한자만): 최근 저장 항목의 분류·발신자·경로를 그대로 보여준다.
+  // 예) /check          → 최근 15건
+  //     /check 중복상장 → '중복상장' 들어간 항목이 어디로(정부/프로젝트/내부) 분류됐는지·누구 이름으로 저장됐는지
+  if (text === "/check" || text.startsWith("/check ")) {
+    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다. /whoami 로 chat_id 확인 후 ADMIN_CHAT_ID 에 등록하세요.");
+    const kw = text.replace("/check", "").trim();
+    const rows = await checkInsights(env, kw, 15);
+    if (!rows.length) return sendMessage(env, chatId, "저장된 항목이 없습니다" + (kw ? " ('" + kw + "')" : "") + ".");
+    const lines = ["🔎 <b>저장 점검</b>" + (kw ? " · " + kw : "") + " — " + rows.length + "건", ""];
+    for (const r of rows) {
+      const cls = r.project ? ("📁프로젝트:" + r.project)
+        : (r.category ? ("🏷대외정보:" + r.category) : "⬜분류없음(내부/미상)");
+      const when = String(r.created_at || "").slice(5, 16); // MM-DD HH:MM
+      lines.push("• <b>" + when + "</b> · " + cls);
+      lines.push("   공유자: <b>" + (r.sender || "미상") + "</b> · 경로:" + (r.source_type || "?") + " · ref:" + (r.source_ref || "-"));
+      lines.push("   " + String(r.summary || "").replace(/<\/?[a-zA-Z]+>/g, "").slice(0, 60));
+      lines.push("");
+    }
+    return sendMessage(env, chatId, lines.join("\n"));
   }
 
   // 프로젝트 키워드 관리 (권한자만)
