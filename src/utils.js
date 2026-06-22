@@ -25,16 +25,37 @@ export function oneLine(text, limit = 90) {
 
 export const firstSentence = oneLine;
 
+function cleanMonthDay(month, day) {
+  let m = Number(month);
+  let d = Number(day);
+  if (!Number.isFinite(m) || !Number.isFinite(d)) return "";
+  if (m >= 1 && m <= 12 && d >= 1 && d <= 31) return m + "/" + d;
+  if (m > 12 && m <= 31 && d >= 1 && d <= 12) return d + "/" + m;
+  return "";
+}
+
 export function issueDate(row) {
   const source = String(row.schedule || "") + "\n" + String(row.summary || "");
   const full = source.match(/20\d{2}[-.\s년]+(\d{1,2})[-.\s월]+(\d{1,2})/);
-  if (full) return Number(full[1]) + "/" + Number(full[2]);
-  const slash = source.match(/(\d{1,2})\/(\d{1,2})/);
-  if (slash) return Number(slash[1]) + "/" + Number(slash[2]);
-  const dotted = source.match(/(\d{1,2})\.(\d{1,2})/);
-  if (dotted) return Number(dotted[1]) + "/" + Number(dotted[2]);
+  if (full) {
+    const v = cleanMonthDay(full[1], full[2]);
+    if (v) return v;
+  }
+  const slash = source.match(/(?:^|[^\d])(\d{1,2})\/(\d{1,2})(?:[^\d]|$)/);
+  if (slash) {
+    const v = cleanMonthDay(slash[1], slash[2]);
+    if (v) return v;
+  }
+  const dotted = source.match(/(?:^|[^\d])(\d{1,2})\.(\d{1,2})(?:[^\d]|$)/);
+  if (dotted) {
+    const v = cleanMonthDay(dotted[1], dotted[2]);
+    if (v) return v;
+  }
   const korean = source.match(/(\d{1,2})월\s*(\d{1,2})일/);
-  if (korean) return Number(korean[1]) + "/" + Number(korean[2]);
+  if (korean) {
+    const v = cleanMonthDay(korean[1], korean[2]);
+    if (v) return v;
+  }
   if (row && row.created_at) {
     const t = Date.parse(String(row.created_at).replace(" ", "T") + "Z");
     if (!isNaN(t)) {

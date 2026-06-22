@@ -3,6 +3,7 @@
 import { getInfoInsightsSince } from "./db.js";
 import { sendMessage } from "./telegram.js";
 import { oneLine, issueDate, issueScore, senderTag, peopleText, stripHtml } from "./utils.js";
+import { callClaude, MODEL_SMART } from "./claude.js";
 
 function recentFirst(a, b) {
   const sa = issueScore(a), sb = issueScore(b);
@@ -20,6 +21,46 @@ const INFO_CATEGORIES = [
 ];
 
 const SEPARATOR = "━━━━━━━━━";
+const INFO_SYSTEM = `당신은 염성진 사장에게 대외정보를 보고하는 비서다.
+입력은 여러 사람이 공유한 DM·파일·회의록 원문이다. 저장된 summary 앞부분을 베끼지 말고, 원문에서 사장에게 보고할 "안건"을 뽑아 한 줄 보고문으로 다시 작성하라.
+
+[절대 원칙]
+- 원문 하나에 여러 안건이 있으면 안건별로 분리한다.
+- 각 안건은 1줄만 쓴다. 제목·목차·"1."·"Ⅱ."·문서 앞머리 복붙 금지.
+- 사람이 만난 내용, 면담 참고자료, 회의록, 정책/언론 동향을 모두 "사장에게 공유된 대외정보" 관점으로 정리한다.
+- 날짜는 원문에 명시된 사안일만 쓴다. 25/6처럼 일/월이면 6/25로 고친다. 30/0처럼 불가능한 날짜는 쓰지 말고 입력의 created 날짜 또는 "—"를 쓴다.
+- 분류는 정부 / BH / 글로벌 / 국회 / 언론 5개만 쓴다. 기타·내부 생성 금지.
+- 출력은 아래 양식만. 설명, 사족, 마크다운 ** 금지. 굵게는 HTML <b>만 사용.
+- 각 항목 끝에는 반드시 (공유자) 를 붙인다.
+
+[분류 기준]
+- 정부: 장관·차관·부처·공정위·산업부·고용부·기후부·지자체·규제기관
+- BH: 대통령·대통령실·정무수석·국정상황실·비서실장·총리·인선
+- 글로벌: 해외 정부/기업/정책, 미국·중국·일본·대만·EU, ASML·NVIDIA·Anthropic 등
+- 국회: 의원실·의원·정당·상임위·법안·입법·정책위
+- 언론: 기자·기사·보도·인터뷰·광고·PR·방송·미디어 대응
+
+[출력 양식]
+📊 대외정보 · {오늘}
+━━━━━━━━━
+
+🏢 <b>정부</b>
+• [M/D] {안건 1줄} ({공유자})
+
+🇰🇷 <b>BH</b>
+• [M/D] {안건 1줄} ({공유자})
+
+🌐 <b>글로벌</b>
+• [M/D] {안건 1줄} ({공유자})
+
+🏛 <b>국회</b>
+• [M/D] {안건 1줄} ({공유자})
+
+🗞 <b>언론</b>
+• [M/D] {안건 1줄} ({공유자})
+
+━━━━━━━━━
+ℹ️ 프로젝트 /project · 핵심 /brief`;
 const STOPWORDS = new Set([
   "보고요망", "관련", "통해", "대한", "대해", "하며", "하고", "있다", "있음", "중임",
   "필요", "강화", "추진", "가능성", "상황", "제기", "예정", "자료", "브리핑",
@@ -32,6 +73,16 @@ function sinceDaysIso(days) {
 function todayText() {
   const d = new Date();
   return (d.getMonth() + 1) + "/" + d.getDate();
+}
+
+function displaySender(row) {
+  const raw = String(row.sender || row.author || "").replace(/\s+/g, " ").trim();
+  if (!raw) return "—";
+  return (raw.split(" ")[0] || raw).slice(0, 20);
+}
+
+function sourceText(row) {
+  return stripHtml(row.raw_message || row.raw_file || row.summary || "").trim();
 }
 
 function tokens(row) {
@@ -81,12 +132,59 @@ async function sendLongMessage(env, chatId, text) {
   for (const part of parts) await sendMessage(env, chatId, part);
 }
 
+function buildInfoPrompt(items) {
+  const blocks = items.slice(0, 45).map(function (row, idx) {
+    const raw = sourceText(row).slice(0, 1200);
+    return [
+      "[자료 " + (idx + 1) + "]",
+      "분류힌트: " + (row.category || ""),
+      "사안일힌트: " + issueDate(row),
+      "공유자: " + displaySender(row),
+      "인물힌트: " + stripHtml(row.people || ""),
+      "저장요약: " + stripHtml(row.summary || ""),
+      "원문:",
+      raw,
+    ].join("\n");
+  });
+  return "오늘: " + todayText() + "\n\n" + blocks.join("\n\n---\n\n");
+}
+
+function cleanInfoOutput(text) {
+  return String(text || "")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .trim();
+}
+
+async function composeInfoWithClaude(env, items) {
+  const prompt = buildInfoPrompt(items);
+  const out = await callClaude(env, prompt, INFO_SYSTEM, MODEL_SMART, 3600);
+  const cleaned = cleanInfoOutput(out);
+  if (!cleaned.includes("📊 대외정보") || !cleaned.includes("━━━━━━━━━")) return "";
+  return cleaned;
+}
+
 export async function runInfoBriefing(env, chatId, days) {
   const rows = await getInfoInsightsSince(env, sinceDaysIso(days || 14), INFO_CATEGORIES.map(function (c) { return c.name; }));
   const items = dedupeIssues((rows || []).filter(function (r) { return r.category && r.summary; }).sort(recentFirst));
   if (!items.length) {
     if (chatId) await sendMessage(env, chatId, "최근 정리된 대외정보가 없습니다.");
     return;
+  }
+
+  try {
+    const composed = await composeInfoWithClaude(env, items);
+    if (composed) {
+      if (chatId) {
+        await sendLongMessage(env, chatId, composed);
+      } else {
+        const targets = String(env.BRIEFING_TARGET_ID || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+        for (const id of targets) await sendLongMessage(env, id, composed);
+      }
+      return;
+    }
+  } catch (e) {
+    console.error("composeInfoWithClaude error", e && e.message);
   }
 
   const lines = ["📊 대외정보 · " + todayText(), SEPARATOR, ""];

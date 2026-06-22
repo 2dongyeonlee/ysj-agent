@@ -148,9 +148,11 @@ export async function getInfoInsightsSince(env, sinceIso, categories) {
   const list = (categories && categories.length) ? categories : ["정부", "국회", "BH", "글로벌", "언론"];
   const ph = list.map(function () { return "?"; }).join(",");
   const { results } = await env.DB.prepare(
-    "SELECT source_type, schedule, category, project, summary, people, author, report_date, sender, created_at, source_ref " +
-    "FROM insights WHERE created_at >= ? AND category IN (" + ph + ") AND (project = '' OR project IS NULL) " +
-    "AND id IN (SELECT MAX(id) FROM insights GROUP BY COALESCE(NULLIF(source_ref,''), CAST(id AS TEXT))) " +
+    "SELECT source_type, schedule, category, project, summary, people, author, report_date, sender, created_at, source_ref, " +
+    "(SELECT text FROM messages m WHERE m.message_id = CASE WHEN instr(i.source_ref, '#') > 0 THEN substr(i.source_ref, 1, instr(i.source_ref, '#') - 1) ELSE i.source_ref END ORDER BY created_at DESC LIMIT 1) AS raw_message, " +
+    "(SELECT text FROM files f WHERE f.file_id = i.source_ref ORDER BY id DESC LIMIT 1) AS raw_file " +
+    "FROM insights i WHERE i.created_at >= ? AND i.category IN (" + ph + ") AND (i.project = '' OR i.project IS NULL) " +
+    "AND i.id IN (SELECT MAX(id) FROM insights GROUP BY COALESCE(NULLIF(source_ref,''), CAST(id AS TEXT))) " +
     "ORDER BY created_at DESC LIMIT 100"
   ).bind(sinceIso, ...list).all();
   return results || [];

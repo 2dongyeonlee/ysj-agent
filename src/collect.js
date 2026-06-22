@@ -77,10 +77,17 @@ function extractSharer(text) {
 // 각 섹션에 브리핑 상단 날짜(m/d)를 prefix 해 일자 정렬이 되게 한다.
 function splitBriefingSections(text) {
   const body = String(text || "");
-  const re = /^[ \t]*\[[^\]\n]{1,40}\]/gm;
+  const patterns = [
+    /^[ \t]*\[[^\]\n]{1,40}\]/gm,
+    /^[ \t]*(?:\d{1,2}[.)]|[①②③④⑤⑥⑦⑧⑨⑩]|[-•]\s*\[[^\]\n]{1,50}\])\s*/gm,
+  ];
   const idxs = [];
-  let m;
-  while ((m = re.exec(body)) !== null) idxs.push(m.index);
+  for (const re of patterns) {
+    idxs.length = 0;
+    let m;
+    while ((m = re.exec(body)) !== null) idxs.push(m.index);
+    if (idxs.length >= 2) break;
+  }
   if (idxs.length < 2) return null;
   const dateHint = (body.slice(0, idxs[0]).match(/\d{1,2}\/\d{1,2}/) || body.match(/\d{1,2}\/\d{1,2}/) || [""])[0];
   const out = [];
