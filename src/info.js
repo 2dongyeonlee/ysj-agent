@@ -133,8 +133,8 @@ async function sendLongMessage(env, chatId, text) {
 }
 
 function buildInfoPrompt(items) {
-  const blocks = items.slice(0, 45).map(function (row, idx) {
-    const raw = sourceText(row).slice(0, 1200);
+  const blocks = items.slice(0, 24).map(function (row, idx) {
+    const raw = sourceText(row).slice(0, 650);
     return [
       "[자료 " + (idx + 1) + "]",
       "분류힌트: " + (row.category || ""),
@@ -158,10 +158,23 @@ function cleanInfoOutput(text) {
 
 async function composeInfoWithClaude(env, items) {
   const prompt = buildInfoPrompt(items);
-  const out = await callClaude(env, prompt, INFO_SYSTEM, MODEL_SMART, 3600);
+  const out = await withTimeout(
+    callClaude(env, prompt, INFO_SYSTEM, MODEL_SMART, 2200),
+    25000,
+    "info compose timeout"
+  );
   const cleaned = cleanInfoOutput(out);
   if (!cleaned.includes("📊 대외정보") || !cleaned.includes("━━━━━━━━━")) return "";
   return cleaned;
+}
+
+function withTimeout(promise, ms, message) {
+  return Promise.race([
+    promise,
+    new Promise(function (_, reject) {
+      setTimeout(function () { reject(new Error(message || "timeout")); }, ms);
+    }),
+  ]);
 }
 
 export async function runInfoBriefing(env, chatId, days) {
