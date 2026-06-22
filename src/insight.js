@@ -42,26 +42,78 @@ export async function loadProjectKeywords(env) {
   }
 }
 
+// 본문(문서 내용)에는 우연한 단어가 많아, 너무 짧은 키워드(예: "용인")는 무관한 문서를
+// 잘못 끌어온다. 공백·하이픈 제거 후 길이로 판단한다.
+function compactLen(kw) {
+  return String(kw || "").replace(/[\s\-]/g, "").length;
+}
+
+// 캡션에서 #해시태그 추출 (#넥서스, #용인 ...)
+function captionTags(caption) {
+  const out = [];
+  const re = /#([0-9A-Za-z가-힣_]+)/g;
+  let m;
+  while ((m = re.exec(String(caption || ""))) !== null) {
+    if (m[1]) out.push(m[1].trim());
+  }
+  return out;
+}
+
+// 태그를 등록 프로젝트로 해석: (1) 프로젝트명 일치 (2) 키워드 포함. 없으면 빈 문자열.
+function resolveTag(keywords, tag) {
+  const t = String(tag || "").toLowerCase();
+  if (!t) return "";
+  for (const row of (keywords || [])) {
+    if (normalizeProject(row.project).toLowerCase() === t) return normalizeProject(row.project);
+  }
+  for (const row of (keywords || [])) {
+    const kw = String(row.keyword || "").toLowerCase();
+    if (kw && t.indexOf(kw) !== -1) return normalizeProject(row.project);
+  }
+  return "";
+}
+
+// 캡션 해시태그 → 프로젝트(분류 최우선). 등록 안 된 태그는 그 이름 그대로 폴더로 사용.
+export function captionProject(keywords, caption) {
+  const tags = captionTags(caption);
+  for (const tag of tags) {
+    const proj = resolveTag(keywords, tag);
+    if (proj) return proj;
+  }
+  return tags.length ? tags[0] : "";
+}
+
 export function matchProjects(keywords, caption, filename, body) {
-  if (!keywords || !keywords.length) return [];
-  const sources = [
-    String(caption || "").toLowerCase(),
-    String(filename || "").toLowerCase(),
-    String(body || "").toLowerCase(),
+  const cap = String(caption || "");
+  const capLower = cap.toLowerCase();
+
+  // 1) 캡션 #해시태그 — 공유자가 직접 지정한 분류이므로 최우선.
+  const tagProj = captionProject(keywords, cap);
+  if (tagProj) return [tagProj];
+
+  if (!keywords || !keywords.length) {
+    return capLower.indexOf("pr중요기사") === 0 ? ["PR 중요기사"] : [];
+  }
+
+  // 2) 캡션 → 3) 파일명 → 4) 본문 순. 본문은 3자 이상 키워드만(짧은 지명 오탐 차단).
+  const tiers = [
+    { src: capLower, body: false },
+    { src: String(filename || "").toLowerCase(), body: false },
+    { src: String(body || "").toLowerCase(), body: true },
   ];
-  const capLower = sources[0];
-  for (const src of sources) {
-    if (!src) continue;
+  for (const tier of tiers) {
+    if (!tier.src) continue;
     const hit = [];
     for (const row of keywords) {
       const kw = String(row.keyword || "").toLowerCase();
       if (!kw) continue;
+      if (tier.body && compactLen(kw) <= 2) continue; // 본문에서는 2자 이하 키워드 무시
       const project = normalizeProject(row.project);
       if (project === "PR 중요기사") {
         if (capLower.indexOf("pr중요기사") === 0 && hit.indexOf(project) === -1) hit.push(project);
         continue;
       }
-      if (src.indexOf(kw) !== -1 && hit.indexOf(project) === -1) hit.push(project);
+      if (tier.src.indexOf(kw) !== -1 && hit.indexOf(project) === -1) hit.push(project);
     }
     if (hit.length) return hit;
   }

@@ -126,7 +126,7 @@ async function route(env, msg) {
     }
     const keywords = kwPart.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
     if (!project || !keywords.length) {
-      return sendMessage(env, chatId, "형식: /addproject 프로젝트 | 키워드,키워드\n예: /addproject 용인 Pull-in | 용인,pull-in");
+      return sendMessage(env, chatId, "형식: /addproject 프로젝트 | 키워드,키워드\n예: /addproject 용인 Pull-in | 용인,pull-in\n\n※ 파일 공유 시 캡션에 #프로젝트명(예: #넥서스)을 적으면 그 폴더로 무조건 분류됩니다.");
     }
     for (const kw of keywords) await addProjectKeyword(env, project, kw);
     return sendMessage(env, chatId, "✅ <b>" + project + "</b> 키워드 추가: " + keywords.join(", "));

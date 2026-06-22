@@ -2,7 +2,7 @@
 import { saveMessage, saveFile } from "./db.js";
 import { senderName } from "./telegram.js";
 import { maybeExtractEngagement } from "./extract.js";
-import { extractInsight } from "./insight.js";
+import { extractInsight, captionProject, loadProjectKeywords } from "./insight.js";
 import { extractText } from "./docparse.js";
 
 const INSIGHT_SIGNAL = /보고|일정|회의|미팅|면담|결정|승인|검토|발표|배포|규제|정책|국회|정부|공정위|산업부|BH|대통령|글로벌|언론|기사|PR|프로젝트|추진|협력|제휴|오찬/;
@@ -89,6 +89,15 @@ export async function collectMessage(env, msg) {
       }
     } catch (e) {
       console.error("file extractInsight isolated error", e && e.message);
+    }
+
+    // 캡션 #해시태그는 분류 최우선 — 텍스트추출 실패·사진이어도 지정 폴더로 보장.
+    try {
+      const kws = await loadProjectKeywords(env);
+      const tagProj = captionProject(kws, msg.caption || "");
+      if (tagProj) { meta.project = tagProj; meta.category = ""; }
+    } catch (e) {
+      console.error("captionProject isolated error", e && e.message);
     }
 
     // 사진·무제 파일은 추출 텍스트에서 제목 뽑아 키에 사용
