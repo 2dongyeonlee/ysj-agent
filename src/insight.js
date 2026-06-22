@@ -204,6 +204,30 @@ async function insertInsight(env, row) {
   ).run();
 }
 
+// 저장된 파일을 다시 분류한다(재분류용). 키워드로 프로젝트가 잡히면 LLM 호출 없이 끝.
+// 안 잡힐 때만 LLM 으로 kind/category/project 를 판정. insights 테이블에는 쓰지 않는다.
+export async function classifyStored(env, { text, filename, caption }) {
+  const body = String(text || "").trim();
+  const keywords = await loadProjectKeywords(env);
+  const matched = matchProjects(keywords, caption || "", filename || "", body);
+  if (matched.length) return { project: matched[0], category: "" };
+  if (body.length < 10) return { project: "", category: "" };
+  let parsed;
+  try {
+    const raw = await callClaude(env, "내용:\n" + body.slice(0, 4000), EXTRACT_SYSTEM, MODEL_FAST, 500);
+    parsed = JSON.parse(cleanJson(raw));
+  } catch (e) {
+    console.error("classifyStored parse error", e && e.message);
+    return { project: "", category: "" };
+  }
+  const llmProject = normalizeProject(parsed.project);
+  const isProject = !!llmProject || String(parsed.kind || "").trim() === "project";
+  return {
+    project: isProject ? llmProject : "",
+    category: isProject ? "" : normalizeCategory(parsed.category),
+  };
+}
+
 export async function extractInsight(env, { chatId, sourceType, sourceRef, text, sender, caption, filename, receivedAt }) {
   try {
     const body = String(text || "").trim();

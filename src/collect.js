@@ -28,11 +28,16 @@ function titleFromText(extracted) {
 
 // R2 저장 키: {대분류}/{중분류}/{날짜}_{제목}_{공유자}{확장자}
 // 입력 시점 분류로 고정. 분류가 바뀌어도 R2 키는 그대로, D1 메타만 갱신.
+// 분류 → R2 상위 폴더(대분류/중분류). buildR2Key 와 재분류(reclass)가 공유.
+export function r2Folder(meta) {
+  if (meta && meta.project) return "project/" + meta.project;
+  if (meta && meta.category) return "info/" + meta.category;
+  return "etc/misc";
+}
+
 function buildR2Key(meta) {
   const date = new Date().toISOString().slice(0, 10);
-  let big = "etc", mid = "misc";
-  if (meta.project) { big = "project"; mid = meta.project; }
-  else if (meta.category) { big = "info"; mid = meta.category; }
+  const folder = r2Folder(meta);
 
   let title = "";
   if (meta.filename && !/^image\.jpg$/.test(meta.filename)) {
@@ -45,7 +50,7 @@ function buildR2Key(meta) {
   const who = (meta.sender || "").replace(/[^\w가-힣]/g, "").slice(0, 10) || "미상";
   const ext = meta.isPhoto ? ".jpg"
     : (meta.filename && meta.filename.match(/\.[^.]+$/) ? meta.filename.match(/\.[^.]+$/)[0] : "");
-  return `${big}/${mid}/${date}_${title}_${who}${ext}`;
+  return `${folder}/${date}_${title}_${who}${ext}`;
 }
 
 export async function collectMessage(env, msg) {

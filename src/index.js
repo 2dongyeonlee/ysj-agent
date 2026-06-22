@@ -9,6 +9,7 @@ import { handleVoice } from "./voice.js";
 import { classifyIntent } from "./intent.js";
 import { sendMessage } from "./telegram.js";
 import { addProjectKeyword, listProjects, deleteProject } from "./db.js";
+import { runReclass } from "./reclass.js";
 
 // 권한자 텔레그램 username (앞의 @ 제외). 동연 username 으로 교체 필요.
 // env.ADMIN_USERNAMES (쉼표구분) 가 있으면 함께 허용.
@@ -50,7 +51,8 @@ const HELP =
   "• \"넥서스 어떻게 됐어?\" — 프로젝트 현황\n" +
   "• \"오늘 만남 뭐 있어?\" — 브리핑\n" +
   "• \"김영훈 장관 면담 자료 공유해줘\" — 원본 전송\n\n" +
-  "<i>프로젝트 관리: /addproject · /listproject · /delproject</i>";
+  "<i>프로젝트 관리: /addproject · /listproject · /delproject</i>\n" +
+  "<i>기존 파일 재분류: /reclass</i>";
 
 export default {
   async fetch(request, env) {
@@ -109,6 +111,12 @@ async function route(env, msg) {
       }
     }
     return sendMessage(env, chatId, "이관 완료: 성공 " + done + "건, 실패 " + fail + "건 (file_id 만료 시 실패)");
+  }
+
+  // 기존 적재 파일 재분류 (권한자만): 저장된 텍스트로 다시 분류해 R2 폴더 이동.
+  if (text === "/reclass" || text.startsWith("/reclass ")) {
+    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다.");
+    return runReclass(env, chatId, text.indexOf("reset") !== -1);
   }
 
   // 프로젝트 키워드 관리 (권한자만)
