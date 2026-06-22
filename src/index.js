@@ -27,6 +27,16 @@ function isAdmin(env, msg) {
   return adminList(env).indexOf(uname) !== -1;
 }
 
+// 텔레그램 file_id → 다운로드 URL (R2 이관용). collect.js 의 동일 헬퍼.
+async function getFileUrlPublic(env, fileId) {
+  const res = await fetch(
+    `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`
+  );
+  const data = await res.json();
+  if (!data.ok) return "";
+  return `https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${data.result.file_path}`;
+}
+
 const HELP =
   "📋 <b>사용 안내</b>\n\n" +
   "자료·녹음을 보내면 자동 저장·분류됩니다.\n" +
@@ -74,6 +84,32 @@ async function route(env, msg) {
 
   // ---- commands (ASCII only). arg = text after the command ----
   if (text === "/help" || text === "/start") return sendMessage(env, chatId, HELP);
+
+  // 기존 파일 일괄 이관 (권한자만): r2_key 빈 행을 R2 로 옮긴다.
+  if (text === "/migrate") {
+    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다.");
+    const { results } = await env.DB.prepare(
+      "SELECT id, file_id, filename FROM files WHERE (r2_key = '' OR r2_key IS NULL) AND file_id != '' LIMIT 50"
+    ).all();
+    let done = 0, fail = 0;
+    for (const row of (results || [])) {
+      try {
+        const url = await getFileUrlPublic(env, row.file_id);
+        if (!url) { fail++; continue; }
+        const fr = await fetch(url);
+        if (!fr.ok) { fail++; continue; }
+        const body = await fr.arrayBuffer();
+        const key = "migrated/" + (row.filename || ("file_" + row.id)).replace(/[^\w.\-가-힣]/g, "_");
+        await env.R2.put(key, body);
+        await env.DB.prepare("UPDATE files SET r2_key = ? WHERE id = ?").bind(key, row.id).run();
+        done++;
+      } catch (e) {
+        console.error("migrate row error", row.id, e && e.message);
+        fail++;
+      }
+    }
+    return sendMessage(env, chatId, "이관 완료: 성공 " + done + "건, 실패 " + fail + "건 (file_id 만료 시 실패)");
+  }
 
   // 프로젝트 키워드 관리 (권한자만)
   if (text.startsWith("/addproject")) {

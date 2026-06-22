@@ -1,0 +1,28 @@
+name: Deploy to Cloudflare Workers
+
+# main 에 push(머지)되면 자동 배포. Actions 탭에서 수동 실행도 가능(workflow_dispatch).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Deploy worker (R2 버킷 생성 + D1 마이그레이션 + 배포)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "3.90.0"
+          # 최초 1회: 버킷 생성 + sender 컬럼 추가. 이미 있으면 에러 무시(|| true).
+          preCommands: |
+            wrangler r2 bucket create ysj-files || true
+            wrangler d1 execute ysj-db --remote --file=migrations/0010_add_file_sender.sql || true

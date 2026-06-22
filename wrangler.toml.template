@@ -30,10 +30,10 @@ database_id = "<새_D1_id>"
 binding = "STATE"
 id = "<새_KV_id>"
 
-# ── R2 (자료 백필·영구보존용) ─────────────────────────
-# 지금은 file_id 로 충분해 비활성. 과거 자료를 대량 올리거나
-# 봇 교체 대비 영구보존이 필요해지면 아래 주석을 풀고 bucket 생성:
-#   wrangler r2 bucket create pres-ai-files
-# [[r2_buckets]]
-# binding = "FILES"
-# bucket_name = "pres-ai-files"
+# ── R2 (파일 원본 영구보존 + 텍스트추출 검색) ─────────────
+# 파일 수신 시 원본을 R2 에 자동 업로드한다 (collect.js → env.R2).
+# 버킷 생성(1회):
+#   wrangler r2 bucket create ysj-files
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "ysj-files"

@@ -1,0 +1,30 @@
+# ysj-agent — 운영 배포 설정. GitHub Actions(.github/workflows/deploy.yml)가 이 파일로 배포한다.
+#
+# ▸ 시크릿(TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, TAVILY_API_KEY)은 여기 두지 말 것.
+#   Cloudflare 에 wrangler secret 으로 이미 저장돼 있고, 배포해도 유지된다.
+# ▸ 평문 vars(BRIEFING_CHAT_ID, BOT_USERNAME, ADMIN_USERNAMES 등)는 keep_vars=true 로
+#   대시보드에 설정된 값을 그대로 보존하므로 여기 다시 적지 않는다.
+
+name = "ysj-agent"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+keep_vars = true
+
+[triggers]
+crons = ["0 23 * * 0-4"]   # 평일 KST 08:00 (UTC 23:00) 아침 브리핑
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ysj-db"
+database_id = "f756a989-7552-4125-91b6-3d99fb27e1b3"
+
+# 코드는 env.STATE 를 쓰므로 binding 은 STATE 로 고정.
+# id 는 기존 네임스페이스(데이터 보존)를 그대로 가리킨다 — KV 데이터는 id 기준.
+[[kv_namespaces]]
+binding = "STATE"
+id = "fd17b2fe59b5482587cf3f3d6fc5dee2"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "ysj-files"

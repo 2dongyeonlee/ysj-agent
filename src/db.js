@@ -28,8 +28,8 @@ export async function searchMessages(env, keyword) {
 // ===== 파일 (기능2: 자료 전달) =====
 export async function saveFile(env, f) {
   await env.DB.prepare(
-    `INSERT INTO files (chat_id, file_id, r2_key, filename, text) VALUES (?, ?, ?, ?, ?)`
-  ).bind(String(f.chat_id), f.file_id || "", f.r2_key || "", f.filename || "", f.text || "").run();
+    `INSERT INTO files (chat_id, file_id, r2_key, filename, text, sender) VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(String(f.chat_id), f.file_id || "", f.r2_key || "", f.filename || "", f.text || "", f.sender || "").run();
 }
 
 export async function searchFiles(env, keyword) {
