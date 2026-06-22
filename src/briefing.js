@@ -12,9 +12,9 @@ const INTERNAL_PERSON_RE = /염성진|윤풍영|SK그룹 의장|커뮤니케이�
 const EXTERNAL_AFFIL_RE = /장관|차관|고용노동부|산업통상자원부|산업부|과기부|정부|국회|의원|BH|대통령|총리|비서실|수석|CEO|해외|글로벌/;
 const CHATTER_RE = /^(안녕하세요|감사합니다|네|넵|오 |아 |음|제가 |저장을|따로|보내주신|일정도|최근|여기까지|잘 |좋|맞아요|이해를|가능|\/|@)/;
 const BOT_OUTPUT_RE = /^(📊|🗞|📂|📋|🪪|📄|요약할 내용|권한이 없습니다|현재 제공|안녕하세요\. 무엇을)/;
-const ISSUE_RE = /보고|결정|확인|승인|검토|대응|규제|리스크|면담|간담회|발표|준비|토킹포인트|회의|일정|변경|공유|요청|의견|청취|주재|방침|추진|계획|자료/;
-const DECISION_RE = /결정|확정|승인|확인 필요|보고요망|보고 필요|대응 방침|의견 청취|주재|규제|리스크|요청|준비 필요|검토 필요/;
-const REPORT_RE = /보고|발표|준비|토킹포인트|연설|간담회|행사|O\/I|TF|추진 현황|운영계획/;
+const ISSUE_RE = /보고|결정|확인|승인|검토|면담|간담회|발표|준비|토킹포인트|회의|일정|변경|공유|요청|주재|방침|추진|계획|자료/;
+const DECISION_RE = /사장님|결정|확정|승인|확인 필요|보고요망|보고 필요|보내주세요|대응 방침|요청|준비 필요|검토 필요|발표내용/;
+const REPORT_RE = /보고|발표|준비|토킹포인트|연설|간담회|행사|O\/I|TF|추진 현황|운영계획|보고드립니다|발표자료|아젠다/;
 
 const MORNING_SYSTEM = PERSONA_STYLE + "\n\n" +
   "[작업] 지난 하루 대화를 읽고 사장이 출근길 30초에 파악하도록 정리. 각 항목 1줄.\n" +
@@ -91,14 +91,17 @@ function isReportRow(row) {
   return isOI(row) || REPORT_RE.test(textOf(row));
 }
 
-function reportTag(row) {
-  return isOI(row) ? "[사내]" : "[외부]";
-}
-
 function byImminence(a, b) {
   const now = new Date();
   const today = (now.getMonth() + 1) * 100 + now.getDate();
   return Math.abs(issueScore(a) - today) - Math.abs(issueScore(b) - today);
+}
+
+function isTodayOrFuture(row) {
+  const score = issueScore(row);
+  const now = new Date();
+  const today = (now.getMonth() + 1) * 100 + now.getDate();
+  return score !== 9999 && score >= today;
 }
 
 function uniqueRows(rows) {
@@ -150,9 +153,10 @@ export async function runBrief(env, chatId) {
   const internalRows = ((await getInsightsSince(env, sinceDaysIso(7), { projectEmpty: true })) || [])
     .filter(function (r) { return r.category === "내부" || isOI(r); });
 
-  const decisions = uniqueRows(infoRows.concat(projRows).filter(isDecisionRow)).sort(byImminence).slice(0, 5);
-  const meetings = uniqueRows(infoRows.filter(isMeetingRow)).sort(byImminence).slice(0, 4);
-  const reports = uniqueRows(internalRows.concat(infoRows).filter(isReportRow)).sort(byImminence).slice(0, 5);
+  const workRows = internalRows.concat(projRows);
+  const decisions = uniqueRows(workRows.filter(isDecisionRow).filter(isTodayOrFuture)).sort(byImminence).slice(0, 5);
+  const meetings = uniqueRows(infoRows.filter(isMeetingRow).filter(isTodayOrFuture)).sort(byImminence).slice(0, 4);
+  const reports = uniqueRows(workRows.filter(isReportRow).filter(isTodayOrFuture)).sort(byImminence).slice(0, 5);
 
   const lines = ["🗞 브리핑 · " + todayText(), SEPARATOR, ""];
   lines.push("🚨 <b>결정·확인 필요</b>");
@@ -176,7 +180,7 @@ export async function runBrief(env, chatId) {
 
   lines.push("📋 <b>보고 건</b>");
   if (reports.length) {
-    for (const row of reports) lines.push("• " + reportTag(row) + " [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
+    for (const row of reports) lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
   } else {
     lines.push("• 임박한 보고 건 없음");
   }
