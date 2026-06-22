@@ -35,7 +35,7 @@ export function r2Folder(meta) {
   return "etc/misc";
 }
 
-function buildR2Key(meta) {
+export function buildR2Key(meta) {
   const date = new Date().toISOString().slice(0, 10);
   const folder = r2Folder(meta);
 
@@ -57,8 +57,14 @@ export async function collectMessage(env, msg) {
   const text = (msg.text || msg.caption || "").trim();
   const sender = senderName(msg);
 
+  // 오디오 문서(.m4a 등)는 voice.js(handleVoice)가 전사·분류·백업까지 전담 → 여기선 제외(중복 방지).
+  const isAudioDoc = msg.document && (
+    /audio/i.test(msg.document.mime_type || "") ||
+    /\.(ogg|oga|mp3|m4a|wav|aac|opus|flac|amr)$/i.test(msg.document.file_name || "")
+  );
+
   // file: R2 upload + text extract + insight + sender
-  if (msg.document || (msg.photo && msg.photo.length)) {
+  if (!isAudioDoc && (msg.document || (msg.photo && msg.photo.length))) {
     const isPhoto = !msg.document && !!(msg.photo && msg.photo.length);
     const fileId = msg.document
       ? msg.document.file_id

@@ -237,9 +237,10 @@ async function route(env, msg) {
   // ---- silent collection (no auto-reply) ----
   await collectMessage(env, msg);
 
-  if (msg.voice || msg.audio || (msg.document && /audio|ogg|mp3|m4a|wav/i.test((msg.document.mime_type || "")))) {
+  if (msg.voice || msg.audio || (msg.document && (/audio/i.test(msg.document.mime_type || "") || /\.(ogg|oga|mp3|m4a|wav|aac|opus|flac|amr)$/i.test(msg.document.file_name || "")))) {
     const mentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
-    await handleVoice(env, chatId, msg, mentioned);
+    // DM(1:1)이면 녹음 즉시 리치 요약 응답. 그룹은 멘션 시에만.
+    await handleVoice(env, chatId, msg, mentioned || msg.chat.type === "private");
     return;
   }
   if (msg.document || (msg.photo && msg.photo.length)) {
