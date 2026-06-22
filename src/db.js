@@ -143,7 +143,7 @@ export async function getProjectTimeline(env, project, sinceIso) {
   if (name) { where += " AND i.project LIKE ?"; binds.push("%" + name + "%"); }
   if (sinceIso) { where += " AND i.created_at >= ?"; binds.push(sinceIso); }
   const { results } = await env.DB.prepare(
-    "SELECT i.schedule, i.project, i.summary, i.people, i.sender, i.created_at, " +
+    "SELECT i.schedule, i.project, i.summary, i.people, i.sender, i.created_at, i.source_ref, " +
     "(SELECT filename FROM files f WHERE f.file_id = i.source_ref ORDER BY id DESC LIMIT 1) AS filename " +
     "FROM insights i WHERE " + where + " ORDER BY lower(i.project), i.created_at ASC LIMIT 50"
   ).bind(...binds).all();

@@ -48,16 +48,23 @@ function progressLine(rows) {
   return "";
 }
 
-function formatGroup(project, rows, subList) {
+// 그룹번호(1,2..) + 항목번호(1-1,1-2..) 부여. {text, map(tag->row)} 반환.
+function formatGroup(groupNo, project, rows, subList) {
   const sorted = rows.slice().sort(sortByIssueDate);
-  const lines = ["📂 [<b>" + displayProjectName(project) + "</b>]"];
+  const lines = [groupNo + ". 📂 [<b>" + displayProjectName(project) + "</b>]", ""];
+  const map = {};
+  let itemNo = 0;
   for (const row of sorted) {
-    lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
+    itemNo++;
+    const tag = groupNo + "-" + itemNo;
+    map[tag] = row;
+    lines.push("  <b>" + tag + "</b> [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
     for (const sub of subTasks(row.summary, subList)) lines.push(formatSubTask(sub, row.summary));
   }
   const prog = progressLine(sorted);
-  if (prog) lines.push("🔍 경과: " + prog);
-  return lines.join("\n");
+  if (prog) lines.push("  🔍 경과: " + prog);
+  lines.push(""); // 그룹 사이 빈 줄
+  return { text: lines.join("\n"), map: map };
 }
 
 async function sendLongMessage(env, chatId, text) {
@@ -92,14 +99,29 @@ export async function runProjectBriefing(env, chatId, days, name) {
   }
 
   const keys = Object.keys(groups).sort();
-  const title = keys.length === 1 ? "📂 프로젝트 · " + displayProjectName(keys[0]) : "📂 프로젝트";
-  const lines = [title, SEPARATOR];
+  const lines = ["📂 <b>프로젝트</b>", SEPARATOR, ""];
+  const fullMap = {};
+  let groupNo = 0;
   for (const key of keys) {
+    groupNo++;
     const subList = await getSubtasks(env, displayProjectName(key));
-    lines.push(formatGroup(key, groups[key], subList));
+    const g = formatGroup(groupNo, key, groups[key], subList);
+    lines.push(g.text);
+    for (const tag in g.map) {
+      const r = g.map[tag];
+      fullMap[tag] = { ref: r.source_ref || "", summary: r.summary || "", project: r.project || "", date: issueDate(r) };
+    }
   }
   lines.push(SEPARATOR);
   lines.push("ℹ️ 대외정보 /info · 핵심 /brief");
+  lines.push("💡 항목 보기: <code>1-1 요약</code> 또는 <code>1-1 자료</code>");
+
+  // 번호→항목 매핑을 KV에 10분 저장(chatId별). 직후 번호 입력에 사용.
+  if (chatId) {
+    try {
+      await env.STATE.put("projmap:" + chatId, JSON.stringify(fullMap), { expirationTtl: 600 });
+    } catch (e) { console.error("projmap save", e && e.message); }
+  }
 
   const out = lines.join("\n");
   if (chatId) {

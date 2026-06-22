@@ -8,6 +8,7 @@ import { runProjectBriefing } from "./project.js";
 import { handleVoice } from "./voice.js";
 import { classifyIntent } from "./intent.js";
 import { sendMessage } from "./telegram.js";
+import { callClaude, MODEL_SMART } from "./claude.js";
 import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks } from "./db.js";
 import { runReclass } from "./reclass.js";
 
@@ -210,6 +211,20 @@ async function route(env, msg) {
     return sendMessage(env, chatId, "🗑 <b>" + proj + "</b> 하위과제 삭제");
   }
 
+  // 프로젝트 항목 번호 조회: "1-1", "1-1 요약", "1-1 자료", "1 (1) 요약" (직전 /project 기준)
+  const itemMatch = text.match(/^(\d+)\s*[-()\s]+\s*(\d+)\)?\s*(요약|자료|상세)?$/);
+  if (itemMatch) {
+    const tag = itemMatch[1] + "-" + itemMatch[2];
+    const want = itemMatch[3] || "둘다";
+    const raw = await env.STATE.get("projmap:" + chatId);
+    if (!raw) return sendMessage(env, chatId, "먼저 /project 를 실행해 주세요. (번호는 직전 /project 기준)");
+    let map;
+    try { map = JSON.parse(raw); } catch { map = {}; }
+    const item = map[tag];
+    if (!item) return sendMessage(env, chatId, tag + " 항목을 찾을 수 없습니다. /project 를 다시 실행해 주세요.");
+    return handleProjectItem(env, chatId, tag, item, want);
+  }
+
   if (text.startsWith("/brief")) return runBrief(env, chatId);
   if (text.startsWith("/decision")) return runBrief(env, chatId); // decision 은 /brief 로 통합
   if (text.startsWith("/info")) {
@@ -271,4 +286,44 @@ async function route(env, msg) {
         return; // 1:1 + none => silent (info delivery)
     }
   }
+}
+
+// /project 번호 항목(예: 1-1)의 원본 자료 링크 + 상세 요약 제공.
+async function handleProjectItem(env, chatId, tag, item, want) {
+  let fileInfo = null;
+  if (item.ref) {
+    try {
+      const { results } = await env.DB.prepare(
+        "SELECT filename, r2_key, text FROM files WHERE file_id = ? ORDER BY id DESC LIMIT 1"
+      ).bind(item.ref).all();
+      if (results && results.length) fileInfo = results[0];
+    } catch (e) { console.error("item file lookup", e && e.message); }
+  }
+
+  const parts = ["📌 <b>" + tag + "</b> · " + (item.project || "") + " (" + item.date + ")"];
+
+  if (want === "자료" || want === "둘다") {
+    if (fileInfo && fileInfo.filename) {
+      parts.push("📎 자료: " + fileInfo.filename + (fileInfo.r2_key ? "\n   (R2: " + fileInfo.r2_key + ")" : ""));
+    } else {
+      parts.push("📎 연결된 원본 파일 없음 (메시지 기반 항목)");
+    }
+  }
+
+  if (want === "요약" || want === "상세" || want === "둘다") {
+    const base = String((fileInfo && fileInfo.text) ? fileInfo.text : (item.summary || "")).trim();
+    if (!base) {
+      parts.push("\n(요약할 원문이 없습니다.)");
+    } else {
+      const sys = "다음 자료를 염 사장 보고용으로 상세히 정리하라. 배경·핵심내용·의사결정/후속·관련 인물을 구분해 충실히. 없는 내용은 지어내지 말 것.";
+      try {
+        const detail = await callClaude(env, base.slice(0, 12000), sys, MODEL_SMART, 2000);
+        parts.push("\n" + detail);
+      } catch (e) {
+        parts.push("\n(요약 생성 실패) 원문 요지: " + String(item.summary || "").slice(0, 500));
+      }
+    }
+  }
+
+  return sendMessage(env, chatId, parts.join("\n"));
 }
