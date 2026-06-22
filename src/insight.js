@@ -281,6 +281,34 @@ export async function classifyStored(env, { text, filename, caption }) {
   };
 }
 
+// 기존 항목 재요약: 원문(text)을 다시 읽어 개선된 프롬프트로 summary/people/schedule 만 새로 만든다.
+// 분류(project/category)는 건드리지 않는다. 실패 시 null.
+export async function resummarizeText(env, text) {
+  const body = String(text || "").trim();
+  if (body.length < 20) return null;
+  const keywords = await loadProjectKeywords(env);
+  let parsed;
+  try {
+    const raw = await callClaude(env, "내용:\n" + body.slice(0, 6000), EXTRACT_SYSTEM + projectHints(keywords), MODEL_FAST, 500);
+    parsed = JSON.parse(cleanJson(raw));
+  } catch (e) {
+    console.error("resummarizeText parse error", e && e.message);
+    return null;
+  }
+  let summary = stripSalutation(String(parsed.summary || "").trim()
+    .replace(/^\[(보고요망|보고|공유|참고|검토요망|검토|긴급|중요)\]\s*/g, ""));
+  if (!summary) {
+    summary = stripSalutation(String(body).replace(/<\/?[a-zA-Z]+>/g, "").trim())
+      .split(/(?<=[.!?。]|다\.|임\.|음\.)\s+/u)[0].slice(0, 80).trim();
+  }
+  if (!summary) return null;
+  return {
+    summary,
+    people: String(parsed.people || "").trim(),
+    schedule: String(parsed.schedule || "").trim(),
+  };
+}
+
 export async function extractInsight(env, { chatId, sourceType, sourceRef, text, sender, senderId, caption, filename, receivedAt }) {
   try {
     const body = String(text || "").trim();
