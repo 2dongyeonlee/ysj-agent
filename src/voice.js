@@ -3,7 +3,7 @@
 // STT provider isolated in transcribe() for later swap (e.g. CLOVA).
 
 import { callClaude, MODEL_SMART } from "./claude.js";
-import { sendMessage, senderName } from "./telegram.js";
+import { sendMessage, senderName, senderId } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 import { extractInsight, captionProject, loadProjectKeywords } from "./insight.js";
 import { saveFile } from "./db.js";
@@ -138,6 +138,7 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
       sourceRef: voice.file_id,
       text: transcript,
       sender,
+      senderId: senderId(msg),
       caption: msg.caption || "",
       filename,
       receivedAt: msg.date ? new Date(msg.date * 1000) : new Date(),

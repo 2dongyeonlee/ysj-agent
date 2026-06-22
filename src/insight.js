@@ -206,10 +206,19 @@ export function parseInfoMeta(text, fallbackSender, fallbackDate) {
   return { author, reportDate: reportDate || "—" };
 }
 
+// sender_id 컬럼 마이그레이션은 워커 인스턴스당 한 번만 시도(매 INSERT 마다 ALTER 방지).
+let senderIdReady = false;
+async function ensureSenderIdColumn(env) {
+  if (senderIdReady) return;
+  try { await env.DB.prepare("ALTER TABLE insights ADD COLUMN sender_id TEXT DEFAULT ''").run(); } catch (e) { /* 이미 있으면 무시 */ }
+  senderIdReady = true;
+}
+
 async function insertInsight(env, row) {
+  await ensureSenderIdColumn(env);
   await env.DB.prepare(
-    `INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, sender, input_chars, read_chars, author, report_date)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, sender, sender_id, input_chars, read_chars, author, report_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     String(row.chatId),
     row.sourceType || "",
@@ -220,6 +229,7 @@ async function insertInsight(env, row) {
     String(row.summary || "").slice(0, 500),
     row.people || "",
     row.sender || "",
+    row.sender_id || "",
     row.inputChars || 0,
     row.readChars || 0,
     row.author || null,
@@ -251,7 +261,7 @@ export async function classifyStored(env, { text, filename, caption }) {
   };
 }
 
-export async function extractInsight(env, { chatId, sourceType, sourceRef, text, sender, caption, filename, receivedAt }) {
+export async function extractInsight(env, { chatId, sourceType, sourceRef, text, sender, senderId, caption, filename, receivedAt }) {
   try {
     const body = String(text || "").trim();
     if (body.length < 10) return null;
@@ -316,6 +326,7 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
       summary,
       people: String(parsed.people || "").trim(),
       sender,
+      sender_id: senderId || "",
       inputChars: body.length,
       readChars: readText.length,
       author: category ? meta.author : null,

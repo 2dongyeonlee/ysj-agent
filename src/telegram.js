@@ -60,6 +60,16 @@ export async function sendDocumentBytes(env, chatId, bytes, filename, caption = 
   return res.json().catch(() => ({}));
 }
 
+// 전달자/발신자의 텔레그램 user id. 전달(forward) 메시지면 원 발신자 id 우선.
+export function senderId(msg) {
+  const m = msg || {};
+  const fo = m.forward_origin || {};
+  const fwdUser = m.forward_from || fo.sender_user;
+  if (fwdUser && fwdUser.id) return String(fwdUser.id);
+  if (m.from && m.from.id) return String(m.from.id);
+  return "";
+}
+
 export function senderName(msg) {
   const m = msg || {};
   // 전달된(forward) 메시지면 '원 발신자(전달해준 사람)'를 우선 표기.

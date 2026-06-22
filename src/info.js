@@ -18,6 +18,8 @@ const INFO_CATEGORIES = [
   { name: "글로벌", icon: "🌐" },
   { name: "국회", icon: "🏛" },
   { name: "언론", icon: "🗞" },
+  { name: "내부", icon: "🏠" },
+  { name: "기타", icon: "📌" },
 ];
 
 const SEPARATOR = "━━━━━━━━━";
