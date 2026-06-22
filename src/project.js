@@ -2,7 +2,7 @@
 
 import { getProjectTimeline } from "./db.js";
 import { sendMessage } from "./telegram.js";
-import { stripHtml, oneLine, issueDate, issueScore, senderTag } from "./utils.js";
+import { stripHtml, issueDate, issueScore, senderTag } from "./utils.js";
 
 const SEPARATOR = "━━━━━━━━━";
 const NOISE_RE = /지원 파일 형식|요약할 내용|권한이 없습니다|원문이 없습니다|^\s*$/;
@@ -67,9 +67,55 @@ function progressLine(rows) {
   return "";
 }
 
+function projectOneLine(text, limit) {
+  let s = stripHtml(text || "")
+    .replace(/^\[(보고요망|보고|공유|참고|검토요망|검토|긴급|중요)\]\s*/g, "")
+    .replace(/^📄\s*[^🎯\n]+/u, "")
+    .replace(/^📋\s*[^📌\n]+/u, "")
+    .replace(/🎯\s*핵심:\s*/g, "")
+    .replace(/📌\s*핵심:\s*/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const bullet = s.match(/(?:^|\s)•\s*([^•\n]+)/);
+  if (bullet) s = bullet[1].trim();
+
+  const first = s.split(/(?<=[.!?。！？]|다\.|임\.|함\.)\s+/u)[0];
+  if (first && first.length >= 20) s = first.trim();
+
+  if (s.length > limit) {
+    const cut = s.slice(0, limit + 1);
+    const marks = [cut.lastIndexOf("·"), cut.lastIndexOf(","), cut.lastIndexOf(";"), cut.lastIndexOf(" 및 "), cut.lastIndexOf(" "), cut.lastIndexOf("으로")];
+    const pos = Math.max.apply(null, marks);
+    s = (pos > 35 ? cut.slice(0, pos) : s.slice(0, limit)).trim();
+  }
+
+  s = s
+    .replace(/[.…]+$/g, "")
+    .replace(/입니다$/g, "임")
+    .replace(/이다$/g, "임")
+    .replace(/한다$/g, "함")
+    .replace(/하였다$/g, "함")
+    .replace(/했다$/g, "함")
+    .replace(/예정이다$/g, "예정임")
+    .replace(/예정$/g, "예정임")
+    .replace(/진행 중$/g, "진행 중임")
+    .replace(/검토 중$/g, "검토 중임")
+    .replace(/필요$/g, "필요함")
+    .replace(/가능$/g, "가능함")
+    .replace(/불가$/g, "불가함")
+    .replace(/자료$/g, "자료임")
+    .trim();
+
+  if (!/(함|임|됨|중|예정|필요|가능|불가|완료)$/.test(s)) {
+    if (/[가-힣A-Za-z0-9)]$/.test(s)) s += "임";
+  }
+  return s;
+}
+
 function formatItem(tag, row, brief) {
   const limit = brief ? 72 : 90;
-  return "  " + tag + " [" + issueDate(row) + "] " + oneLine(row.summary, limit) + senderTag(row);
+  return "  " + tag + " [" + issueDate(row) + "] " + projectOneLine(row.summary, limit) + senderTag(row);
 }
 
 function addMapEntry(map, tag, row) {
