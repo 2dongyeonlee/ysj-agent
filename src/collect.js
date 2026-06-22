@@ -1,6 +1,7 @@
 // collect.js — silently collect messages/files. entry for briefing/search/extract.
-import { saveMessage, saveFile } from "./db.js";
+import { saveMessage, saveFile, priorIdenticalMessage } from "./db.js";
 import { senderName } from "./telegram.js";
+import { sinceDaysIso } from "./utils.js";
 import { maybeExtractEngagement } from "./extract.js";
 import { extractInsight, captionProject, loadProjectKeywords } from "./insight.js";
 import { extractText } from "./docparse.js";
@@ -195,7 +196,17 @@ export async function collectMessage(env, msg) {
     } catch (e) {
       console.error("maybeExtractEngagement isolated error", e && e.message);
     }
-    if (bodyText.length >= 20 && INSIGHT_SIGNAL.test(bodyText)) {
+    // 내용기반 중복제거: 동일 본문이 최근 30일 내 이미 저장·분류됐으면 재추출 생략.
+    // → forward/붙여넣기로 같은 자료를 여러 번 넣어도 /info 에 한 번만(LLM 호출도 절약).
+    //   (가장 먼저 들어온 1건이 유지된다. 발신자 정정이 필요하면 본문을 바꾸거나 '공유: 이름' 사용)
+    let dupBody = false;
+    try {
+      dupBody = await priorIdenticalMessage(env, msg.chat.id, bodyText, msg.message_id, sinceDaysIso(30));
+    } catch (e) {
+      console.error("dedup check isolated error", e && e.message);
+    }
+
+    if (!dupBody && bodyText.length >= 20 && INSIGHT_SIGNAL.test(bodyText)) {
       const baseIns = {
         chatId: msg.chat.id,
         sourceType: "message",
