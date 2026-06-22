@@ -37,17 +37,25 @@ function looksBadTranscript(text) {
 // OpenAI 최대 활용: whisper-1 + verbose_json 으로 세그먼트(시간) 확보.
 // 화자 분리는 OpenAI 미지원이나, 시간 세그먼트가 발화 전환 추정 단서가 된다.
 async function transcribe(env, audioBuf, filename) {
+  const signal = AbortSignal.timeout(90000);
   const form = new FormData();
   form.append("file", new Blob([audioBuf]), filename || "audio.ogg");
   form.append("model", "whisper-1");
   form.append("language", "ko");
   form.append("response_format", "verbose_json");
   form.append("temperature", "0");
-  const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-    method: "POST",
-    headers: { "authorization": "Bearer " + env.OPENAI_API_KEY },
-    body: form,
-  });
+  let res;
+  try {
+    res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { "authorization": "Bearer " + env.OPENAI_API_KEY },
+      body: form,
+      signal,
+    });
+  } catch (e) {
+    console.error("STT request error", e && e.message);
+    return await transcribeFallback(env, audioBuf, filename);
+  }
   if (!res.ok) {
     const t = await res.text();
     console.error("STT fail", res.status, t);
@@ -82,6 +90,7 @@ async function transcribe(env, audioBuf, filename) {
 
 // 폴백: verbose_json 미지원/실패 시 gpt-4o-transcribe 텍스트.
 async function transcribeFallback(env, audioBuf, filename) {
+  const signal = AbortSignal.timeout(90000);
   const form = new FormData();
   form.append("file", new Blob([audioBuf]), filename || "audio.ogg");
   form.append("model", "gpt-4o-transcribe");
@@ -91,6 +100,7 @@ async function transcribeFallback(env, audioBuf, filename) {
     method: "POST",
     headers: { "authorization": "Bearer " + env.OPENAI_API_KEY },
     body: form,
+    signal,
   });
   if (!res.ok) throw new Error("STT failed " + res.status);
   const t = (await res.text()).trim();
@@ -140,23 +150,49 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
 
   if (replyToUser) await sendMessage(env, chatId, "🎙 녹음을 받아쓰고 회의록을 작성하는 중입니다...");
 
-  let transcript, transcriptTimed, audioBuf;
+  const sender = senderName(msg);
+  const filename = voice.file_name || "voice.m4a";
+  let meta = { category: "", project: "", filename, sender, isPhoto: false };
+  let transcript, transcriptTimed, audioBuf, r2Key = "";
   try {
     const url = await getFileUrl(env, voice.file_id);
     audioBuf = await (await fetch(url)).arrayBuffer();
-    const tr = await transcribe(env, audioBuf, voice.file_name || "audio.ogg");
+  } catch (e) {
+    console.error("voice download error", e && e.message);
+    return sendMessage(env, chatId, "녹음 파일을 내려받지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  }
+
+  // 원본 녹음은 STT 전에 먼저 저장한다. STT가 실패해도 자료 유실을 막기 위함.
+  try {
+    if (env.R2 && audioBuf) {
+      r2Key = buildR2Key(meta);
+      await env.R2.put(r2Key, audioBuf, {
+        customMetadata: { category: "", project: "", sender: sender || "", filename },
+      });
+    }
+    await saveFile(env, {
+      chat_id: msg.chat.id,
+      file_id: voice.file_id,
+      r2_key: r2Key,
+      filename,
+      text: "",
+      sender,
+    });
+  } catch (e) {
+    console.error("voice pre-save error", e && e.message);
+  }
+
+  try {
+    const tr = await transcribe(env, audioBuf, filename);
     transcript = tr.plain;
     transcriptTimed = tr.timed;
   } catch (e) {
     console.error("voice transcribe error", e && e.message);
-    return sendMessage(env, chatId, "받아쓰기에 실패했습니다. 다시 시도해 주세요.");
+    return sendMessage(env, chatId, "받아쓰기에 실패했습니다. 원본 녹음은 저장했습니다. 파일이 길거나 음질이 낮으면 조금 짧게 나눠 다시 보내 주세요.");
   }
   if (!transcript) return sendMessage(env, chatId, "음성에서 텍스트를 추출하지 못했습니다.");
 
   // 분류(프로젝트/카테고리) — insight 저장 + 캡션 #해시태그 우선.
-  const sender = senderName(msg);
-  const filename = voice.file_name || "voice.m4a";
-  let meta = { category: "", project: "", filename, sender, isPhoto: false };
   try {
     const ins = await extractInsight(env, {
       chatId: msg.chat.id,
@@ -182,7 +218,6 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
   }
 
   // R2 자동 백업 — 원본 음성을 분류 폴더에 영구 보존.
-  let r2Key = "";
   try {
     if (env.R2 && audioBuf) {
       r2Key = buildR2Key(meta);
@@ -196,14 +231,19 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
 
   // D1 files 저장 — sender·r2_key·전사 텍스트 (saveFile 로 통일).
   try {
-    await saveFile(env, {
-      chat_id: msg.chat.id,
-      file_id: voice.file_id,
-      r2_key: r2Key,
-      filename,
-      text: transcript.slice(0, 5000),
-      sender,
-    });
+    const result = await env.DB.prepare(
+      "UPDATE files SET r2_key = ?, text = ?, sender = ? WHERE file_id = ?"
+    ).bind(r2Key, transcript.slice(0, 5000), sender, voice.file_id).run();
+    if (!result.meta || !result.meta.changes) {
+      await saveFile(env, {
+        chat_id: msg.chat.id,
+        file_id: voice.file_id,
+        r2_key: r2Key,
+        filename,
+        text: transcript.slice(0, 5000),
+        sender,
+      });
+    }
   } catch (e) {
     console.error("voice save error", e && e.message);
   }
