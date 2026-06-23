@@ -427,6 +427,8 @@ async function route(env, msg) {
     // 녹음이 함께 왔거나 reply 대상이 녹음이면 → 회의록 작성(handleVoice)으로.
     if (isAudioMsg(msg)) { await collectMessage(env, msg); return handleVoice(env, chatId, msg, true); }
     if (isAudioMsg(msg.reply_to_message)) return handleVoice(env, chatId, msg.reply_to_message, true);
+    if (isDocumentMsg(msg)) { await collectMessage(env, msg); return summarizeFile(env, chatId, msg, true); }
+    if (isDocumentMsg(msg.reply_to_message)) return summarizeFile(env, chatId, msg.reply_to_message, true);
     const kw = text.replace("/summary", "").trim();
     return summarizeLatest(env, chatId, kw);
   }

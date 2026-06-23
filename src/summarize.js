@@ -96,7 +96,12 @@ async function saveMeetingDocument(env, msg, text, minutes) {
 
 export async function summarizeFile(env, chatId, msg, replyToUser = false) {
   const text = await extractText(env, msg);
-  if (!text) return;
+  if (!text) {
+    if (replyToUser) {
+      await sendMessage(env, chatId, "문서 본문을 읽지 못했습니다. PDF가 암호화/스캔본이거나 파일을 가져오지 못했을 수 있습니다. 텍스트 선택 가능한 PDF, .docx, 또는 .txt로 다시 보내주세요.");
+    }
+    return;
+  }
   if (/^\[(document parse failed|docx parse failed|docx text not found|docx compression unsupported|file too large|legacy Word|only PDF)/i.test(String(text).trim())) {
     if (replyToUser) {
       await sendMessage(env, chatId, "문서 본문을 읽지 못했습니다. PDF는 텍스트가 선택되는 파일로, Word는 .docx 또는 .txt로 다시 보내주세요.");
