@@ -75,6 +75,81 @@ async function extractPdf(env, url) {
   return (data.content || []).filter(c => c.type === "text").map(c => c.text).join("\n") || "[document parse failed]";
 }
 
+async function extractPlainText(url) {
+  const res = await fetch(url);
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength > 4 * 1024 * 1024) return "[file too large]";
+  return new TextDecoder("utf-8").decode(buf).trim();
+}
+
+function readU16(bytes, offset) {
+  return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
+function readU32(bytes, offset) {
+  return (bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24)) >>> 0;
+}
+
+async function inflateRaw(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+function xmlText(xml) {
+  return String(xml || "")
+    .replace(/<w:tab\/>/g, "\t")
+    .replace(/<w:br\/>/g, "\n")
+    .replace(/<\/w:p>/g, "\n")
+    .replace(/<w:t[^>]*>/g, "")
+    .replace(/<\/w:t>/g, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+async function extractDocx(url) {
+  const res = await fetch(url);
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength > 16 * 1024 * 1024) return "[file too large]";
+  const bytes = new Uint8Array(buf);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 66000); i--) {
+    if (readU32(bytes, i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) return "[docx parse failed]";
+  const centralOffset = readU32(bytes, eocd + 16);
+  const centralSize = readU32(bytes, eocd + 12);
+  const decoder = new TextDecoder("utf-8");
+  let pos = centralOffset;
+  const end = centralOffset + centralSize;
+  while (pos < end && readU32(bytes, pos) === 0x02014b50) {
+    const method = readU16(bytes, pos + 10);
+    const compSize = readU32(bytes, pos + 20);
+    const nameLen = readU16(bytes, pos + 28);
+    const extraLen = readU16(bytes, pos + 30);
+    const commentLen = readU16(bytes, pos + 32);
+    const localOffset = readU32(bytes, pos + 42);
+    const name = decoder.decode(bytes.slice(pos + 46, pos + 46 + nameLen));
+    if (name === "word/document.xml") {
+      const localNameLen = readU16(bytes, localOffset + 26);
+      const localExtraLen = readU16(bytes, localOffset + 28);
+      const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+      const packed = bytes.slice(dataStart, dataStart + compSize);
+      const data = method === 0 ? packed : (method === 8 ? await inflateRaw(packed) : null);
+      if (!data) return "[docx compression unsupported]";
+      return xmlText(decoder.decode(data));
+    }
+    pos += 46 + nameLen + extraLen + commentLen;
+  }
+  return "[docx text not found]";
+}
+
 export async function extractText(env, msg) {
   try {
     if (msg.photo && msg.photo.length) {
@@ -91,7 +166,16 @@ export async function extractText(env, msg) {
       if (/\.pdf$/i.test(name)) {
         return await extractPdf(env, url);
       }
-      return "[only PDF and image files are supported: " + name + "]";
+      if (/\.(txt|md|csv)$/i.test(name)) {
+        return await extractPlainText(url);
+      }
+      if (/\.docx$/i.test(name)) {
+        return await extractDocx(url);
+      }
+      if (/\.doc$/i.test(name)) {
+        return "[legacy Word .doc files are not supported. Please send .docx, .pdf, or .txt: " + name + "]";
+      }
+      return "[only PDF, DOCX, TXT, and image files are supported: " + name + "]";
     }
   } catch (e) {
     console.error("extractText error", e && e.message);

@@ -6,6 +6,7 @@ import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 import { loadProjectKeywords, matchProjects, detectDone, detectUrgent, classifyInfoCategory, normalizeProject, parseInfoMeta } from "./insight.js";
 import { updateInsightDone } from "./db.js";
+import { createMeetingMinutes } from "./voice.js";
 
 const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" + `문서를 읽고 JSON만 반환하라. 마크다운 금지.
 
@@ -46,16 +47,90 @@ const SUMMARY_SYSTEM = PERSONA_STYLE + "\n\n" + `당신은 염성진 사장 전�
 ⚖️ 판단필요: {사장이 결정할 것, 없으면 "현 단계 없음"}
 📌 상태: {확정 / 검토중 / 토의용 중 하나}`;
 
+function isMeetingMemoFile(msg, text) {
+  const filename = (msg.document && msg.document.file_name) || "";
+  const caption = msg.caption || "";
+  const hay = (filename + "\n" + caption + "\n" + String(text || "").slice(0, 2000)).toLowerCase();
+  if (/회의록|녹취록|녹취|받아쓰기|전사본|음성\s*메모|미팅\s*메모|meeting minutes|transcript|minutes/.test(hay)) return true;
+  const signals = ["회의", "논의", "발언", "안건", "결정", "미결", "후속", "참석", "화자"];
+  let count = 0;
+  for (const s of signals) if (hay.includes(s.toLowerCase())) count++;
+  return count >= 3;
+}
+
+function stripHtml(text) {
+  return String(text || "").replace(/<\/?[a-zA-Z]+>/g, "").trim();
+}
+
+async function saveMeetingDocument(env, msg, text, minutes) {
+  const fileId = (msg.document && msg.document.file_id) || "";
+  const sender = msg.from ? [msg.from.first_name, msg.from.last_name].filter(Boolean).join(" ") : "";
+  const short = stripHtml(minutes.short || "").slice(0, 500);
+  const full = minutes.full || minutes.short || "";
+  if (fileId) {
+    await env.DB.prepare(
+      "UPDATE files SET text = ?, doc_type = 'meeting', full_minutes = ? WHERE file_id = ? AND chat_id = ?"
+    ).bind(text.slice(0, 16000), full || null, fileId, String(msg.chat.id)).run();
+  } else {
+    await env.DB.prepare(
+      "UPDATE files SET text = ?, doc_type = 'meeting', full_minutes = ? WHERE id = (SELECT id FROM files WHERE chat_id = ? ORDER BY id DESC LIMIT 1)"
+    ).bind(text.slice(0, 16000), full || null, String(msg.chat.id)).run();
+  }
+  await env.DB.prepare(
+    "INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, sender, input_chars, read_chars) " +
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(
+    String(msg.chat.id),
+    "file",
+    fileId,
+    "",
+    "",
+    "",
+    short,
+    "",
+    sender,
+    text.length,
+    Math.min(text.length, 16000)
+  ).run();
+}
+
 export async function summarizeFile(env, chatId, msg, replyToUser = false) {
   const text = await extractText(env, msg);
   if (!text) return;
 
   try {
-    await env.DB.prepare(
-      "UPDATE files SET text = ? WHERE id = (SELECT id FROM files WHERE chat_id = ? ORDER BY id DESC LIMIT 1)"
-    ).bind(text.slice(0, 5000), String(msg.chat.id)).run();
+    const fileId = (msg.document && msg.document.file_id) || "";
+    if (fileId) {
+      await env.DB.prepare(
+        "UPDATE files SET text = ? WHERE file_id = ? AND chat_id = ?"
+      ).bind(text.slice(0, 5000), fileId, String(msg.chat.id)).run();
+    } else {
+      await env.DB.prepare(
+        "UPDATE files SET text = ? WHERE id = (SELECT id FROM files WHERE chat_id = ? ORDER BY id DESC LIMIT 1)"
+      ).bind(text.slice(0, 5000), String(msg.chat.id)).run();
+    }
   } catch (e) {
     console.error("files text update error", e && e.message);
+  }
+
+  if (isMeetingMemoFile(msg, text)) {
+    let minutes = null;
+    try {
+      minutes = await createMeetingMinutes(env, text);
+    } catch (e) {
+      console.error("meeting document minutes error", e && e.message);
+      minutes = {
+        short: "[회의 메모]\n━━━━━━━━━━━━━━━━━━\n[결정 필요]\n- 없음\n\n[안건]\n1. 음성 메모 문서 — 회의록 생성에 실패해 원문 일부만 저장됨.\n   → 미결: 원문 재확인 필요.\n\n[후속조치]\n- 없음\n━━━━━━━━━━━━━━━━━━\n전체 회의록 필요 시 /minutes",
+        full: text.slice(0, 4000),
+      };
+    }
+    try {
+      await saveMeetingDocument(env, msg, text, minutes);
+    } catch (e) {
+      console.error("meeting document save error", e && e.message);
+    }
+    await sendMessage(env, chatId, minutes.short);
+    return;
   }
 
   let parsed = null;

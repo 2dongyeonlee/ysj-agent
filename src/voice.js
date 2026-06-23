@@ -352,7 +352,7 @@ function fallbackShortMinutes(transcript) {
   ].join("\n");
 }
 
-async function createMeetingMinutes(env, transcript) {
+export async function createMeetingMinutes(env, transcript) {
   const raw = await callClaude(env,
     "받아쓰기 전문:\n" + String(transcript || "").slice(0, 16000),
     MEETING_JSON_SYSTEM,
