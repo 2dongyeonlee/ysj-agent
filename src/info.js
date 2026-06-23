@@ -160,6 +160,11 @@ function cleanInfoOutput(text) {
   return String(text || "")
     .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
     .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/📊\s*/g, "")
+    .replace(/ℹ️\s*/g, "")
+    .replace(/^[ \t]*(?:🏢|🇰🇷|🌐|🏛|🗞)\s*<b>([^<]+)<\/b>/gm, "<b>[$1]</b>")
+    .replace(/^[ \t]*<b>(정부|BH|국회|언론|글로벌|경쟁사)<\/b>/gm, "<b>[$1]</b>")
+    .replace(/프로젝트\s*\/project\s*·\s*핵심\s*\/brief/g, "프로젝트 /project · 핵심 /brief")
     .trim();
 }
 
@@ -187,13 +192,14 @@ function withTimeout(promise, ms, message) {
 export async function runInfoBriefing(env, chatId, days) {
   const rows = await getInfoInsightsSince(env, sinceDaysIso(days || 14), INFO_CATEGORIES.map(function (c) { return c.name; }));
   const items = dedupeIssues((rows || []).filter(function (r) { return r.category && r.summary; }).sort(recentFirst));
+  const visibleItems = items.slice(0, 24);
   if (!items.length) {
     if (chatId) await sendMessage(env, chatId, "최근 정리된 대외정보가 없습니다.");
     return;
   }
 
   try {
-    const composed = await composeInfoWithClaude(env, items);
+    const composed = await composeInfoWithClaude(env, visibleItems);
     if (composed) {
       if (chatId) {
         await sendLongMessage(env, chatId, composed);
@@ -209,7 +215,7 @@ export async function runInfoBriefing(env, chatId, days) {
 
   const lines = ["대외정보 · " + todayText(), SEPARATOR, ""];
   for (const cat of INFO_CATEGORIES) {
-    const grouped = items.filter(function (r) { return r.category === cat.name; });
+    const grouped = visibleItems.filter(function (r) { return r.category === cat.name; });
     if (!grouped.length) continue;
     lines.push("<b>[" + cat.name + "]</b>");
     for (const row of grouped) {
