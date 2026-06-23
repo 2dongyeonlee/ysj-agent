@@ -3,9 +3,9 @@
 // STT provider isolated in transcribe() for later swap (e.g. CLOVA).
 
 import { callClaude, MODEL_SMART } from "./claude.js";
-import { sendMessage, senderName, senderId } from "./telegram.js";
+import { sendMessage, senderName } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
-import { extractInsight, captionProject, loadProjectKeywords } from "./insight.js";
+import { extractInsight } from "./insight.js";
 import { saveFile } from "./db.js";
 import { buildR2Key } from "./collect.js";
 
@@ -59,21 +59,22 @@ async function transcribeTextModel(env, audioBuf, filename, model, timeoutMs) {
   return { plain: t, timed: t };
 }
 
-// Worker 실행 시간 안에 끝나는 것을 우선한다. 느린 verbose_json 대신 빠른 텍스트 전사를 먼저 사용.
-async function transcribe(env, audioBuf, filename) {
+// STT. timeoutMs 로 모델별 제한시간을 조절(큐는 넉넉히, 웹훅은 짧게).
+async function transcribe(env, audioBuf, filename, timeoutMs) {
+  const t = timeoutMs || 24000;
   try {
-    return await transcribeTextModel(env, audioBuf, filename, "gpt-4o-transcribe", 24000);
+    return await transcribeTextModel(env, audioBuf, filename, "gpt-4o-transcribe", t);
   } catch (e) {
     console.error("gpt-4o-transcribe error", e && e.message);
     if (/abort|timeout/i.test(String((e && (e.name || e.message)) || ""))) throw e;
   }
   try {
-    return await transcribeTextModel(env, audioBuf, filename, "gpt-4o-mini-transcribe", 20000);
+    return await transcribeTextModel(env, audioBuf, filename, "gpt-4o-mini-transcribe", t);
   } catch (e) {
     console.error("gpt-4o-mini-transcribe error", e && e.message);
     if (/abort|timeout/i.test(String((e && (e.name || e.message)) || ""))) throw e;
   }
-  return await transcribeTextModel(env, audioBuf, filename, "whisper-1", 20000);
+  return await transcribeTextModel(env, audioBuf, filename, "whisper-1", t);
 }
 
 const VOICE_SYSTEM = PERSONA_STYLE + "\n\n" +
@@ -109,6 +110,9 @@ export function pickAudio(msg) {
   return null;
 }
 
+// 녹음 접수 — STT는 여기서 하지 않는다. R2에 원본을 저장하고 files 행을 '대기'(text='')로 남긴 뒤
+// 즉시 반환한다. 실제 받아쓰기는 매분 도는 Cron(runVoiceQueue)이 처리한다.
+// (긴 녹음 STT는 웹훅 백그라운드 실행 한도를 넘겨 멈추므로, 실행시간이 긴 Cron으로 분리.)
 export async function handleVoice(env, chatId, msg, replyToUser = false) {
   const voice = pickAudio(msg);
   if (!voice) return;
@@ -116,12 +120,10 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
     return sendMessage(env, chatId, "녹음 파일이 너무 큽니다 (텔레그램 봇 한계 20MB). 10분 내외로 잘라 보내주세요.");
   }
 
-  if (replyToUser) await sendMessage(env, chatId, "🎙 녹음을 받아쓰고 회의록을 작성하는 중입니다...");
-
   const sender = senderName(msg);
   const filename = voice.file_name || "voice.m4a";
-  let meta = { category: "", project: "", filename, sender, isPhoto: false };
-  let transcript, audioBuf, r2Key = "";
+  const meta = { category: "", project: "", filename, sender, isPhoto: false };
+  let audioBuf, r2Key = "";
   try {
     const url = await getFileUrl(env, voice.file_id);
     audioBuf = await (await fetch(url)).arrayBuffer();
@@ -130,7 +132,7 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
     return sendMessage(env, chatId, "녹음 파일을 내려받지 못했습니다. 잠시 후 다시 시도해 주세요.");
   }
 
-  // 원본 녹음은 STT 전에 먼저 저장한다. STT가 실패해도 자료 유실을 막기 위함.
+  // 원본을 R2에 저장하고 files 행을 대기 상태(text='')로 남긴다.
   try {
     if (env.R2 && audioBuf) {
       r2Key = buildR2Key(meta);
@@ -138,96 +140,107 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
         customMetadata: { category: "", project: "", sender: sender || "", filename },
       });
     }
-    await saveFile(env, {
-      chat_id: msg.chat.id,
-      file_id: voice.file_id,
-      r2_key: r2Key,
-      filename,
-      text: "",
-      sender,
-    });
-  } catch (e) {
-    console.error("voice pre-save error", e && e.message);
-  }
-
-  try {
-    const tr = await transcribe(env, audioBuf, filename);
-    transcript = tr.plain;
-  } catch (e) {
-    console.error("voice transcribe error", e && e.message);
-    return sendMessage(env, chatId, "받아쓰기에 실패했습니다. 원본 녹음은 저장했습니다. 파일이 길거나 음질이 낮으면 조금 짧게 나눠 다시 보내 주세요.");
-  }
-  if (!transcript) return sendMessage(env, chatId, "음성에서 텍스트를 추출하지 못했습니다.");
-
-  // 분류(프로젝트/카테고리) — insight 저장 + 캡션 #해시태그 우선.
-  try {
-    const ins = await extractInsight(env, {
-      chatId: msg.chat.id,
-      sourceType: "voice",
-      sourceRef: voice.file_id,
-      text: transcript,
-      sender,
-      senderId: senderId(msg),
-      caption: msg.caption || "",
-      filename,
-      receivedAt: msg.date ? new Date(msg.date * 1000) : new Date(),
-    });
-    if (ins && typeof ins === "object") { meta.category = ins.category || ""; meta.project = ins.project || ""; }
-  } catch (e) {
-    console.error("voice extractInsight error", e && e.message);
-  }
-  try {
-    const kws = await loadProjectKeywords(env);
-    const tagProj = captionProject(kws, msg.caption || "");
-    if (tagProj) { meta.project = tagProj; meta.category = ""; }
-  } catch (e) {
-    console.error("voice captionProject error", e && e.message);
-  }
-
-  // R2 자동 백업 — 원본 음성을 분류 폴더에 영구 보존.
-  try {
-    if (env.R2 && audioBuf) {
-      r2Key = buildR2Key(meta);
-      await env.R2.put(r2Key, audioBuf, {
-        customMetadata: { category: meta.category || "", project: meta.project || "", sender: sender || "", filename },
-      });
-    }
-  } catch (e) {
-    console.error("voice R2 upload error", e && e.message);
-  }
-
-  // D1 files 저장 — sender·r2_key·전사 텍스트 (saveFile 로 통일).
-  try {
-    const result = await env.DB.prepare(
-      "UPDATE files SET r2_key = ?, text = ?, sender = ? WHERE file_id = ?"
-    ).bind(r2Key, transcript.slice(0, 16000), sender, voice.file_id).run();
-    if (!result.meta || !result.meta.changes) {
+    const upd = await env.DB.prepare(
+      "UPDATE files SET r2_key = ?, sender = ? WHERE file_id = ?"
+    ).bind(r2Key, sender, voice.file_id).run();
+    if (!upd.meta || !upd.meta.changes) {
       await saveFile(env, {
         chat_id: msg.chat.id,
         file_id: voice.file_id,
         r2_key: r2Key,
         filename,
-        text: transcript.slice(0, 16000),
+        text: "",
         sender,
       });
     }
   } catch (e) {
-    console.error("voice save error", e && e.message);
+    console.error("voice enqueue save error", e && e.message);
   }
 
-  if (!replyToUser) return; // silent store only
+  if (replyToUser) {
+    await sendMessage(env, chatId,
+      "🎙 녹음을 받았습니다. 받아쓰는 중이며 1~2분 내 전사가 도착합니다. (긴 녹음일수록 조금 더 걸려요)\n" +
+      "전사가 오면 '회의록' 또는 /minutes 로 회의록을 받을 수 있습니다.");
+  }
+}
 
-  // STT/요약 분리: 여기서는 받아쓰기 전송까지만. 요약은 "회의록"/"/minutes" 로 별도 처리해
-  // 한 요청에 STT+요약을 붙이지 않는다(Workers 시간초과 원천 차단).
-  const plainTr = (transcript || "").trim();
-  if (plainTr) {
-    const head = plainTr.slice(0, 3500);
+const VOICE_AUDIO_LIKE =
+  "(filename LIKE '%.m4a' OR filename LIKE '%.ogg' OR filename LIKE '%.oga' " +
+  "OR filename LIKE '%.mp3' OR filename LIKE '%.wav' OR filename LIKE '%.aac' " +
+  "OR filename LIKE '%.opus' OR filename LIKE '%.amr' OR filename LIKE '%.flac' " +
+  "OR filename LIKE '%voice%' OR filename LIKE '%녹음%')";
+
+// 매분 Cron 이 호출 — 대기 중인 녹음 1건을 받아쓰기. Cron 핸들러는 웹훅보다 실행시간이 길어
+// 긴 녹음도 처리 가능. 동시 실행은 KV 락으로 막고, 반복 실패는 시도 횟수로 끊는다.
+export async function runVoiceQueue(env) {
+  if (await env.STATE.get("vq:lock")) return; // 이미 처리 중
+  await env.STATE.put("vq:lock", "1", { expirationTtl: 170 });
+  try {
+    const row = await env.DB.prepare(
+      "SELECT id, chat_id, file_id, r2_key, filename, sender FROM files " +
+      "WHERE (text IS NULL OR text = '') AND r2_key != '' AND " + VOICE_AUDIO_LIKE + " " +
+      "AND created_at >= datetime('now','-2 hours') ORDER BY id ASC LIMIT 1"
+    ).first();
+    if (!row) return;
+    const chatId = row.chat_id;
+
+    // 반복 실패 차단 — 2회 시도 후 sentinel 저장하고 안내(더는 대기 대상이 아님).
+    const attKey = "vq:att:" + row.id;
+    const att = parseInt((await env.STATE.get(attKey)) || "0", 10);
+    if (att >= 2) {
+      await env.DB.prepare("UPDATE files SET text = ? WHERE id = ?").bind("[받아쓰기 실패]", row.id).run();
+      await sendMessage(env, chatId, "받아쓰기에 반복 실패했습니다. 녹음이 너무 길거나 음질/형식 문제일 수 있어요. 10분 이내로 나눠 다시 보내주세요. (원본은 저장돼 있습니다)");
+      return;
+    }
+    await env.STATE.put(attKey, String(att + 1), { expirationTtl: 86400 });
+
+    // R2에서 원본 로드.
+    let audioBuf;
+    try {
+      const obj = await env.R2.get(row.r2_key);
+      if (!obj) {
+        await env.DB.prepare("UPDATE files SET text = ? WHERE id = ?").bind("[받아쓰기 실패: 원본 없음]", row.id).run();
+        return;
+      }
+      audioBuf = await obj.arrayBuffer();
+    } catch (e) {
+      console.error("voice queue R2 load error", row.id, e && e.message);
+      return; // 다음 분에 재시도
+    }
+
+    // STT — Cron 이라 넉넉한 타임아웃 사용.
+    let transcript = "";
+    try {
+      const tr = await transcribe(env, audioBuf, row.filename, 150000);
+      transcript = (tr.plain || "").trim();
+    } catch (e) {
+      console.error("voice queue STT error", row.id, e && e.message);
+      return; // att 증가됨 → 다음 분 재시도, 2회 후 실패 처리
+    }
+    if (!transcript) return;
+
+    // 전사 저장.
+    try {
+      await env.DB.prepare("UPDATE files SET text = ? WHERE id = ?")
+        .bind(transcript.slice(0, 16000), row.id).run();
+    } catch (e) { console.error("voice queue save error", row.id, e && e.message); }
+
+    // 분류(insight) — 실패해도 전사는 이미 저장됨.
+    try {
+      await extractInsight(env, {
+        chatId, sourceType: "voice", sourceRef: row.file_id, text: transcript,
+        sender: row.sender || "", senderId: "", caption: "", filename: row.filename, receivedAt: new Date(),
+      });
+    } catch (e) { console.error("voice queue extractInsight error", row.id, e && e.message); }
+
+    // 전사 전송 + 회의록 안내.
+    const head = transcript.slice(0, 3500);
     await sendMessage(env, chatId,
       "🎙 받아쓰기 완료 (전문은 저장됨):\n\n" + head +
-      (plainTr.length > 3500 ? "\n\n…(이하 생략)" : "") +
+      (transcript.length > 3500 ? "\n\n…(이하 생략)" : "") +
       "\n\n📝 회의록이 필요하면 '회의록' 또는 /minutes 라고 보내주세요.");
-  } else {
-    await sendMessage(env, chatId, "음성에서 텍스트를 추출하지 못했습니다.");
+  } finally {
+    await env.STATE.delete("vq:lock");
   }
 }
 
@@ -236,7 +249,7 @@ export async function makeMinutesFromStored(env, chatId) {
   let row = null;
   try {
     row = await env.DB.prepare(
-      "SELECT filename, text FROM files WHERE chat_id = ? AND text != '' " +
+      "SELECT filename, text FROM files WHERE chat_id = ? AND text != '' AND text NOT LIKE '[받아쓰기 실패%' " +
       "AND (filename LIKE '%.m4a' OR filename LIKE '%.ogg' OR filename LIKE '%.oga' " +
       "OR filename LIKE '%.mp3' OR filename LIKE '%.wav' OR filename LIKE '%voice%' OR filename LIKE '%녹음%') " +
       "ORDER BY id DESC LIMIT 1"

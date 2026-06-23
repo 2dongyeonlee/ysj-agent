@@ -12,7 +12,10 @@ compatibility_flags = ["nodejs_compat"]
 keep_vars = true
 
 [triggers]
-crons = ["0 23 * * sun,mon,tue,wed,thu"]   # 평일 KST 08:00 (UTC 23:00 Sun-Thu) 아침 브리핑
+crons = [
+  "0 23 * * sun,mon,tue,wed,thu",   # 평일 KST 08:00 (UTC 23:00 Sun-Thu) 아침 브리핑
+  "* * * * *",                      # 매분 — 대기 중인 녹음 받아쓰기(STT 큐)
+]
 
 [[d1_databases]]
 binding = "DB"
