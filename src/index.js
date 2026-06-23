@@ -5,7 +5,7 @@ import { enqueueDocumentSummary, runDocumentSummaryQueue, summarizeFile, summari
 import { handleQA } from "./qa.js";
 import { runInfoBriefing } from "./info.js";
 import { runProjectBriefing } from "./project.js";
-import { handleVoice, makeMinutesFromStored, runVoiceQueue } from "./voice.js";
+import { handleVoice, makeMinutesFromStored, regenerateMinutesWithMeta, runVoiceQueue } from "./voice.js";
 import { classifyIntent } from "./intent.js";
 import { sendMessage, sendDocument, sendDocumentBytes } from "./telegram.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
@@ -131,6 +131,12 @@ async function route(env, msg) {
   const key = "msg:" + chatId + ":" + msg.message_id;
   if (await env.STATE.get(key)) return;
   await env.STATE.put(key, "1", { expirationTtl: 60 });
+
+  const mctx = await env.STATE.get("mctx:" + chatId);
+  if (mctx && text && !text.startsWith("/") && /\d|참석|안건|명단|날짜/.test(text)) {
+    await env.STATE.delete("mctx:" + chatId);
+    return regenerateMinutesWithMeta(env, chatId, mctx, text);
+  }
 
   // ---- commands (ASCII only). arg = text after the command ----
   if (text === "/help" || text === "/start") return sendMessage(env, chatId, HELP);

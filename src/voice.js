@@ -95,13 +95,13 @@ const VOICE_SYSTEM = PERSONA_STYLE + "\n\n" +
   "<b>녹음 회의록 · {일시 또는 추정}</b>\n\n" +
   "<b>한 줄</b>\n• 확정 {N}건 / 사장 결정 필요 {M}건 — 핵심 1줄(미결은 <u>밑줄</u>)\n\n" +
   "━━━━━━━━━\n" +
-  "<b>[안건별 요지]</b>\n• <b>{안건}</b>: {배경·쟁점 압축} → 결정: {결론} 또는 → <u>미결</u>: {남은 것}\n\n" +
+  "■ <b>안건별 요지</b>\n• <b>{안건}</b>: {배경·쟁점 압축} → 결정: {결론} 또는 → <u>미결</u>: {남은 것}\n\n" +
   "━━━━━━━━━\n" +
-  "<b>[결정·확정]</b>\n• {확정된 것만. 결과 동사는 <b>로. 없으면 '확정 없음'}\n\n" +
+  "■ <b>결정·확정</b>\n• {확정된 것만. 결과 동사는 <b>로. 없으면 '확정 없음'}\n\n" +
   "━━━━━━━━━\n" +
-  "<b>[후속 조치]</b>\n• {담당자}: {할 일} / <u>{기한·시점}</u>\n\n" +
+  "■ <b>후속 조치</b>\n• {담당자}: {할 일} / <u>{기한·시점}</u>\n\n" +
   "━━━━━━━━━\n" +
-  "<b>[참석]</b>\n• {화자/직책 — 참고용, 짧게}";
+  "■ <b>참석</b>\n• {화자/직책 — 참고용, 짧게}";
 
 const MEETING_JSON_SYSTEM = PERSONA_STYLE + "\n\n" +
   "아래 받아쓰기 전문을 읽고 JSON만 반환하라. 마크다운 코드블록 금지.\n" +
@@ -110,21 +110,21 @@ const MEETING_JSON_SYSTEM = PERSONA_STYLE + "\n\n" +
   "- 텔레그램에 바로 보낼 짧은 회의록이다. '요약'이라는 단어를 쓰지 않는다.\n" +
   "- 이모지, 마크다운 헤더, 표 금지. 구분선은 ━━━━━━━━━━━━━━━━━━ 만 사용.\n" +
   "- 상단에 '결정·확정' 별도 섹션을 만들지 말고, 확정 결정은 각 안건의 '→ 결정:'에만 적는다.\n" +
-  "- [결정 필요]에는 사장님이 직접 판단할 항목만 쓴다. 없으면 '없음'.\n" +
-  "- [안건]은 번호 목록으로 쓰고, 각 안건은 반드시 '→ 결정:' 또는 '→ 미결:'로 닫는다.\n" +
-  "- [후속조치]에는 담당/기한 있는 액션만 쓴다. 없으면 '없음'.\n" +
+  "- ■ <b>결정 필요</b>에는 사장님이 직접 판단할 항목만 쓴다. 없으면 '없음'.\n" +
+  "- ■ <b>안건</b>은 번호 목록으로 쓰고, 각 안건은 반드시 '→ 결정:' 또는 '→ 미결:'로 닫는다.\n" +
+  "- ■ <b>후속조치</b>에는 담당/기한 있는 액션만 쓴다. 없으면 '없음'.\n" +
   "- 아래 형식을 지켜라.\n\n" +
-  "[회의 제목]\n" +
-  "[일시] 자료에 명시된 날짜·시간. 없으면 '미상'\n" +
-  "[참석] 자료에 등장하는 참석자·발화자·소속. 없으면 '미상'\n" +
-  "[배경] 이 회의/문서가 다루는 맥락 1줄\n" +
+  "■ <b>회의 제목</b>\n" +
+  "■ <b>일시</b> 자료에 명시된 날짜·시간. 없으면 '미상'\n" +
+  "■ <b>참석</b> 자료에 등장하는 참석자·발화자·소속. 없으면 '미상'\n" +
+  "■ <b>배경</b> 이 회의/문서가 다루는 맥락 1줄\n" +
   "━━━━━━━━━━━━━━━━━━\n" +
-  "[결정 필요]\n" +
+  "■ <b>결정 필요</b>\n" +
   "- 사장님이 직접 판단할 항목만\n\n" +
-  "[안건]\n" +
+  "■ <b>안건</b>\n" +
   "1. 안건명 — 핵심 내용 일부\n" +
   "   → 결정: 확정된 것 또는 → 미결: 남은 것\n\n" +
-  "[후속조치]\n" +
+  "■ <b>후속조치</b>\n" +
   "- 담당/기한 있는 액션만\n" +
   "━━━━━━━━━━━━━━━━━━\n" +
   "전체 회의록 필요 시 /minutes\n\n" +
@@ -321,7 +321,9 @@ export async function runVoiceQueue(env) {
       });
     } catch (e) { console.error("voice queue saveMeetingInsight error", row.id, e && e.message); }
 
-    await sendMessage(env, minutesTargetChat(env, chatId), minutes.short || fallbackShortMinutes(transcript));
+    const targetChatId = minutesTargetChat(env, chatId);
+    const out = await withMetaFollowup(env, targetChatId, row.file_id, minutes.short || fallbackShortMinutes(transcript));
+    await sendMessage(env, targetChatId, out);
   } finally {
     await env.STATE.delete("vq:lock");
   }
@@ -341,18 +343,31 @@ function fallbackShortMinutes(transcript) {
   return [
     "회의 내용 확인",
     "━━━━━━━━━━━━━━━━━━",
-    "[결정 필요]",
+    "■ <b>결정 필요</b>",
     "- 없음",
     "",
-    "[안건]",
+    "■ <b>안건</b>",
     "1. 회의 내용 — " + (first || "전사 내용 확인 필요"),
     "   → 미결: 상세 회의록 생성 필요",
     "",
-    "[후속조치]",
+    "■ <b>후속조치</b>",
     "- 없음",
     "━━━━━━━━━━━━━━━━━━",
     "전체 회의록 필요 시 /minutes",
   ].join("\n");
+}
+
+const ASK_META = "\n\n■ <b>보강 안내</b>\n날짜·참석 명단·주요 아젠다를 알려주시면 회의록에 반영해 다시 작성해 드립니다.\n예) 6/23, 염성진·권오혁·이동연, 안건: AX 전략";
+
+export async function withMetaFollowup(env, chatId, fileId, minutesText) {
+  let out = String(minutesText || "");
+  if (/미상|미정/.test(out)) {
+    if (fileId) {
+      await env.STATE.put("mctx:" + chatId, String(fileId), { expirationTtl: 1800 });
+    }
+    out += ASK_META;
+  }
+  return out;
 }
 
 export async function createMeetingMinutes(env, transcript) {
@@ -397,7 +412,7 @@ async function saveMeetingInsight(env, row) {
 async function latestMeeting(env, chatId) {
   try {
     return await env.DB.prepare(
-      "SELECT id, filename, text, full_minutes, " +
+      "SELECT id, file_id, filename, text, full_minutes, " +
       "(SELECT summary FROM insights i WHERE i.source_type = 'voice' AND i.source_ref = files.file_id ORDER BY id DESC LIMIT 1) AS summary " +
       "FROM files WHERE chat_id = ? AND text != '' AND text NOT LIKE '[받아쓰기 실패%' " +
       "AND (doc_type = 'meeting' OR filename LIKE '%.m4a' OR filename LIKE '%.ogg' OR filename LIKE '%.oga' " +
@@ -416,7 +431,7 @@ export async function makeMinutesFromStored(env, chatId) {
   if (!row || !row.text) {
     return sendMessage(env, chatId, "최근 받아쓰기를 찾지 못했습니다. 녹음을 먼저 보내주세요.");
   }
-  if (row.full_minutes) return sendMessage(env, chatId, row.full_minutes);
+  if (row.full_minutes) return sendMessage(env, chatId, await withMetaFollowup(env, chatId, row.file_id, row.full_minutes));
   // 상세본이 없으면 생성 작업을 큐에 넣는다. 다음 분 Cron(runVoiceQueue→generateMinutes)이 처리.
   await env.STATE.put("mj:" + chatId, "1", { expirationTtl: 1800 });
   return sendMessage(env, chatId,
@@ -431,13 +446,36 @@ export async function generateMinutes(env, chatId) {
     return sendMessage(env, chatId, "최근 받아쓰기를 찾지 못했습니다. 녹음을 먼저 보내주세요.");
   }
   try {
-    if (row.full_minutes) return sendMessage(env, chatId, row.full_minutes);
+    if (row.full_minutes) return sendMessage(env, chatId, await withMetaFollowup(env, chatId, row.file_id, row.full_minutes));
     const minutes = await createMeetingMinutes(env, row.text);
     await env.DB.prepare("UPDATE files SET doc_type = 'meeting', full_minutes = ? WHERE id = ?")
       .bind(minutes.full || null, row.id).run();
-    await sendMessage(env, chatId, minutes.full || minutes.short);
+    const out = await withMetaFollowup(env, chatId, row.file_id, minutes.full || minutes.short);
+    await sendMessage(env, chatId, out);
   } catch (e) {
     console.error("generateMinutes error", e && (e.stack || e.message));
     await sendMessage(env, chatId, "회의록 작성에 실패했습니다. 잠시 후 다시 '회의록'이라고 보내주세요.");
+  }
+}
+
+export async function regenerateMinutesWithMeta(env, chatId, fileId, metaText) {
+  const row = await env.DB.prepare(
+    "SELECT id, file_id, text FROM files WHERE file_id = ? AND text != '' ORDER BY id DESC LIMIT 1"
+  ).bind(String(fileId || "")).first();
+  if (!row || !row.text) {
+    return sendMessage(env, chatId, "보강할 회의록 원문을 찾지 못했습니다. 문서를 다시 보내주세요.");
+  }
+  try {
+    const minutes = await createMeetingMinutes(
+      env,
+      "추가 메타정보: " + String(metaText || "").trim() + "\n\n전사:\n" + row.text
+    );
+    const out = minutes.full || minutes.short;
+    await env.DB.prepare("UPDATE files SET doc_type = 'meeting', full_minutes = ? WHERE id = ?")
+      .bind(out || null, row.id).run();
+    await sendMessage(env, chatId, out || "회의록을 다시 작성하지 못했습니다.");
+  } catch (e) {
+    console.error("regenerateMinutesWithMeta error", e && (e.stack || e.message));
+    await sendMessage(env, chatId, "회의록 재작성에 실패했습니다. 잠시 후 다시 보내주세요.");
   }
 }

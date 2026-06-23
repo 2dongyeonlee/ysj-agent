@@ -6,7 +6,7 @@ import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 import { loadProjectKeywords, matchProjects, detectDone, detectUrgent, classifyInfoCategory, normalizeProject, parseInfoMeta } from "./insight.js";
 import { saveFile, updateInsightDone } from "./db.js";
-import { createMeetingMinutes } from "./voice.js";
+import { createMeetingMinutes, withMetaFollowup } from "./voice.js";
 
 const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" + `문서를 읽고 JSON만 반환하라. 마크다운 금지.
 
@@ -40,12 +40,12 @@ const SUMMARY_SYSTEM = PERSONA_STYLE + "\n\n" + `당신은 염성진 사장 전�
 - 날짜·인명·금액은 <b>굵게</b>.
 
 [출력 양식]
-📄 <b>{제목}</b>
-🗓 {날짜} · 🏷 {프로젝트}
-🎯 핵심: {이 문서가 말하는 단 하나, 1줄}
-💰 규모: {핵심 숫자 2~3개, 없으면 —}
-⚖️ 판단필요: {사장이 결정할 것, 없으면 "현 단계 없음"}
-📌 상태: {확정 / 검토중 / 토의용 중 하나}`;
+■ <b>제목</b> {제목}
+■ <b>일정</b> {날짜} · {프로젝트}
+■ <b>주요 내용</b> {이 문서가 말하는 단 하나, 1줄}
+■ <b>규모</b> {핵심 숫자 2~3개, 없으면 —}
+■ <b>Action Item</b> {사장이 결정할 것, 없으면 "현 단계 없음"}
+■ <b>상태</b> {확정 / 검토중 / 토의용 중 하나}`;
 
 function isMeetingMemoFile(msg, text) {
   const filename = (msg.document && msg.document.file_name) || "";
@@ -175,7 +175,7 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false, optio
     } catch (e) {
       console.error("meeting document minutes error", e && e.message);
       minutes = {
-        short: "[회의 메모]\n━━━━━━━━━━━━━━━━━━\n[결정 필요]\n- 없음\n\n[안건]\n1. 음성 메모 문서 — 회의록 생성에 실패해 원문 일부만 저장됨.\n   → 미결: 원문 재확인 필요.\n\n[후속조치]\n- 없음\n━━━━━━━━━━━━━━━━━━\n전체 회의록 필요 시 /minutes",
+        short: "■ <b>회의 메모</b>\n━━━━━━━━━━━━━━━━━━\n■ <b>결정 필요</b>\n- 없음\n\n■ <b>안건</b>\n1. 음성 메모 문서 — 회의록 생성에 실패해 원문 일부만 저장됨.\n   → 미결: 원문 재확인 필요.\n\n■ <b>후속조치</b>\n- 없음\n━━━━━━━━━━━━━━━━━━\n전체 회의록 필요 시 /minutes",
         full: text.slice(0, 4000),
       };
     }
@@ -184,7 +184,7 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false, optio
     } catch (e) {
       console.error("meeting document save error", e && e.message);
     }
-    await sendMessage(env, chatId, minutes.short);
+    await sendMessage(env, chatId, await withMetaFollowup(env, chatId, (msg.document && msg.document.file_id) || "", minutes.short));
     return;
   }
 
