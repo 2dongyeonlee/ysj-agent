@@ -124,6 +124,15 @@ function dedupeIssues(rows) {
   return kept;
 }
 
+function selectInfoItems(items) {
+  const selected = [];
+  for (const cat of INFO_CATEGORIES) {
+    const grouped = items.filter(function (row) { return row.category === cat.name; }).slice(0, 2);
+    selected.push(...grouped);
+  }
+  return selected.slice(0, 12);
+}
+
 async function sendLongMessage(env, chatId, text) {
   const limit = 3500;
   const parts = [];
@@ -140,8 +149,8 @@ async function sendLongMessage(env, chatId, text) {
 }
 
 function buildInfoPrompt(items) {
-  const blocks = items.slice(0, 24).map(function (row, idx) {
-    const raw = sourceText(row).slice(0, 650);
+  const blocks = items.map(function (row, idx) {
+    const raw = sourceText(row).slice(0, 400);
     return [
       "[자료 " + (idx + 1) + "]",
       "분류힌트: " + (row.category || ""),
@@ -192,7 +201,7 @@ function withTimeout(promise, ms, message) {
 export async function runInfoBriefing(env, chatId, days) {
   const rows = await getInfoInsightsSince(env, sinceDaysIso(days || 14), INFO_CATEGORIES.map(function (c) { return c.name; }));
   const items = dedupeIssues((rows || []).filter(function (r) { return r.category && r.summary; }).sort(recentFirst));
-  const visibleItems = items.slice(0, 24);
+  const visibleItems = selectInfoItems(items);
   if (!items.length) {
     if (chatId) await sendMessage(env, chatId, "최근 정리된 대외정보가 없습니다.");
     return;
@@ -226,7 +235,7 @@ export async function runInfoBriefing(env, chatId, days) {
     lines.push("");
   }
   lines.push(SEPARATOR);
-  lines.push("프로젝트 /project · 핵심 /brief");
+  lines.push("프로젝트 /project · 핵심 /brief · 간략모드");
 
   const out = lines.join("\n");
   if (chatId) {
