@@ -140,9 +140,11 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
         customMetadata: { category: "", project: "", sender: sender || "", filename },
       });
     }
+    // (file_id, chat_id) 기준 — 같은 녹음을 여러 방에 전달하면 file_id 가 같으므로
+    // chat_id 까지 봐야 방마다 자기 행이 생긴다(전사를 올린 방으로 돌려보내기 위함).
     const upd = await env.DB.prepare(
-      "UPDATE files SET r2_key = ?, sender = ? WHERE file_id = ?"
-    ).bind(r2Key, sender, voice.file_id).run();
+      "UPDATE files SET r2_key = ?, sender = ? WHERE file_id = ? AND chat_id = ?"
+    ).bind(r2Key, sender, voice.file_id, String(msg.chat.id)).run();
     if (!upd.meta || !upd.meta.changes) {
       await saveFile(env, {
         chat_id: msg.chat.id,
@@ -185,14 +187,22 @@ export async function runVoiceQueue(env) {
       return;
     }
 
-    // 2) 받아쓰기 대기 처리.
-    const row = await env.DB.prepare(
+    // 2) 받아쓰기 대기 처리. 오래된 순으로 후보를 보되, 최근 시도한 행은 건너뛴다
+    //    — 길거나 실패하는 한 건이 큐 전체(특히 다른 방 녹음)를 막지 않도록(공정성).
+    const cands = (await env.DB.prepare(
       "SELECT id, chat_id, file_id, r2_key, filename, sender FROM files " +
       "WHERE (text IS NULL OR text = '') AND r2_key != '' AND " + VOICE_AUDIO_LIKE + " " +
-      "AND created_at >= datetime('now','-2 hours') ORDER BY id ASC LIMIT 1"
-    ).first();
+      "AND created_at >= datetime('now','-2 hours') ORDER BY id ASC LIMIT 6"
+    ).all()).results || [];
+    let row = null;
+    for (const c of cands) {
+      if (await env.STATE.get("vq:cool:" + c.id)) continue; // 최근 시도함 → 다음 기회에
+      row = c;
+      break;
+    }
     if (!row) return;
     const chatId = row.chat_id;
+    await env.STATE.put("vq:cool:" + row.id, "1", { expirationTtl: 240 }); // 4분 쿨다운
 
     // 반복 실패 차단 — 2회 시도 후 sentinel 저장하고 안내(더는 대기 대상이 아님).
     const attKey = "vq:att:" + row.id;
