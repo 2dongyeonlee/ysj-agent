@@ -197,6 +197,11 @@ export async function getInfoInsightsSince(env, sinceIso, categories) {
     "(SELECT text FROM messages m WHERE m.message_id = CASE WHEN instr(i.source_ref, '#') > 0 THEN substr(i.source_ref, 1, instr(i.source_ref, '#') - 1) ELSE i.source_ref END ORDER BY created_at DESC LIMIT 1) AS raw_message, " +
     "(SELECT text FROM files f WHERE f.file_id = i.source_ref ORDER BY id DESC LIMIT 1) AS raw_file " +
     "FROM insights i WHERE i.created_at >= ? AND i.category IN (" + ph + ") AND (i.project = '' OR i.project IS NULL) " +
+    "AND ( " +
+    "  i.summary LIKE '%일간 글로벌%' OR i.summary LIKE '%Daily%' OR i.summary LIKE '%경영환경%' " +
+    "  OR EXISTS (SELECT 1 FROM messages m2 WHERE m2.message_id = CASE WHEN instr(i.source_ref,'#')>0 THEN substr(i.source_ref,1,instr(i.source_ref,'#')-1) ELSE i.source_ref END AND (m2.text LIKE '%<Daily>%' OR m2.text LIKE '%일간 글로벌 정책 브리핑%' OR m2.text LIKE '%경영환경%')) " +
+    "  OR EXISTS (SELECT 1 FROM files f2 WHERE f2.file_id = i.source_ref AND f2.text LIKE '%경영환경%') " +
+    ") " +
     "AND i.id IN (SELECT MAX(id) FROM insights GROUP BY COALESCE(NULLIF(source_ref,''), CAST(id AS TEXT))) " +
     "ORDER BY created_at DESC LIMIT 100"
   ).bind(sinceIso, ...list).all();
