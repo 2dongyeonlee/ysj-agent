@@ -5,7 +5,7 @@ import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 import { loadProjectKeywords, matchProjects, detectDone, detectUrgent, classifyInfoCategory, normalizeProject, parseInfoMeta } from "./insight.js";
-import { updateInsightDone } from "./db.js";
+import { saveFile, updateInsightDone } from "./db.js";
 import { createMeetingMinutes } from "./voice.js";
 
 const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" + `문서를 읽고 JSON만 반환하라. 마크다운 금지.
@@ -64,10 +64,21 @@ function stripHtml(text) {
 
 async function saveMeetingDocument(env, msg, text, minutes) {
   const fileId = (msg.document && msg.document.file_id) || "";
+  const filename = (msg.document && msg.document.file_name) || "document";
   const sender = msg.from ? [msg.from.first_name, msg.from.last_name].filter(Boolean).join(" ") : "";
   const short = stripHtml(minutes.short || "").slice(0, 500);
   const full = minutes.full || minutes.short || "";
   if (fileId) {
+    await saveFile(env, {
+      chat_id: msg.chat.id,
+      file_id: fileId,
+      r2_key: "",
+      filename,
+      text: text.slice(0, 16000),
+      sender,
+      doc_type: "meeting",
+      full_minutes: full || null,
+    });
     await env.DB.prepare(
       "UPDATE files SET text = ?, doc_type = 'meeting', full_minutes = ? WHERE file_id = ? AND chat_id = ?"
     ).bind(text.slice(0, 16000), full || null, fileId, String(msg.chat.id)).run();
@@ -94,7 +105,39 @@ async function saveMeetingDocument(env, msg, text, minutes) {
   ).run();
 }
 
-export async function summarizeFile(env, chatId, msg, replyToUser = false) {
+export async function enqueueDocumentSummary(env, chatId, msg, options = {}) {
+  const key = "ds:" + String(chatId) + ":" + String(msg.message_id || Date.now());
+  await env.STATE.put(key, JSON.stringify({ chatId: String(chatId), msg, forceMeeting: !!options.forceMeeting }), { expirationTtl: 1800 });
+}
+
+export async function runDocumentSummaryQueue(env) {
+  const list = await env.STATE.list({ prefix: "ds:" });
+  if (!list.keys || !list.keys.length) return;
+  const key = list.keys[0].name;
+  const raw = await env.STATE.get(key);
+  if (!raw) {
+    await env.STATE.delete(key);
+    return;
+  }
+  let job = null;
+  try {
+    job = JSON.parse(raw);
+  } catch (e) {
+    console.error("document summary queue parse error", e && e.message);
+    await env.STATE.delete(key);
+    return;
+  }
+  try {
+    await summarizeFile(env, job.chatId, job.msg, true, { forceMeeting: !!job.forceMeeting });
+  } catch (e) {
+    console.error("document summary queue error", e && (e.stack || e.message));
+    await sendMessage(env, job.chatId, "문서 처리 중 오류가 발생했습니다. PDF가 스캔본/암호화 파일이면 텍스트 선택 가능한 PDF, .docx, 또는 .txt로 다시 보내주세요.");
+  } finally {
+    await env.STATE.delete(key);
+  }
+}
+
+export async function summarizeFile(env, chatId, msg, replyToUser = false, options = {}) {
   const text = await extractText(env, msg);
   if (!text) {
     if (replyToUser) {
@@ -124,7 +167,7 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false) {
     console.error("files text update error", e && e.message);
   }
 
-  if (isMeetingMemoFile(msg, text)) {
+  if (options.forceMeeting || isMeetingMemoFile(msg, text)) {
     let minutes = null;
     try {
       minutes = await createMeetingMinutes(env, text);

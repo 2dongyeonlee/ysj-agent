@@ -1,7 +1,7 @@
 // index.js — entry point. routing only. Bot stays silent unless explicitly called.
 import { collectMessage } from "./collect.js";
 import { runMorningBriefing, runBrief } from "./briefing.js";
-import { summarizeFile, summarizeLatest } from "./summarize.js";
+import { enqueueDocumentSummary, runDocumentSummaryQueue, summarizeFile, summarizeLatest } from "./summarize.js";
 import { handleQA } from "./qa.js";
 import { runInfoBriefing } from "./info.js";
 import { runProjectBriefing } from "./project.js";
@@ -109,7 +109,10 @@ export default {
   async scheduled(event, env, ctx) {
     // 매분 Cron — 대기 중인 녹음 받아쓰기(STT). 웹훅보다 실행시간이 길어 긴 녹음도 처리.
     if (event.cron === "* * * * *") {
-      ctx.waitUntil(runVoiceQueue(env).catch((e) => console.error("voice queue error", (e && e.stack) || e)));
+      ctx.waitUntil((async function () {
+        await runDocumentSummaryQueue(env);
+        await runVoiceQueue(env);
+      })().catch((e) => console.error("minute queue error", (e && e.stack) || e)));
       return;
     }
     // 평일 아침 브리핑.
@@ -423,10 +426,10 @@ async function route(env, msg) {
     }
     return runProjectBriefing(env, chatId, days, name);
   }
-  async function summarizeDocumentRequest(targetMsg) {
+  async function summarizeDocumentRequest(targetMsg, forceMeeting = false) {
     await sendMessage(env, chatId, "문서를 읽고 회의록/요약을 작성하는 중입니다. 잠시만 기다려주세요.");
     try {
-      return await summarizeFile(env, chatId, targetMsg, true);
+      await enqueueDocumentSummary(env, chatId, targetMsg, { forceMeeting });
     } catch (e) {
       console.error("summarizeDocumentRequest error", e && (e.stack || e.message));
       return sendMessage(env, chatId, "문서 처리 중 오류가 발생했습니다. PDF가 스캔본/암호화 파일이면 텍스트 선택 가능한 PDF, .docx, 또는 .txt로 다시 보내주세요.");
@@ -436,8 +439,8 @@ async function route(env, msg) {
     // 녹음이 함께 왔거나 reply 대상이 녹음이면 → 회의록 작성(handleVoice)으로.
     if (isAudioMsg(msg)) { await collectMessage(env, msg); return handleVoice(env, chatId, msg, true); }
     if (isAudioMsg(msg.reply_to_message)) return handleVoice(env, chatId, msg.reply_to_message, true);
-    if (isDocumentMsg(msg)) { await collectMessage(env, msg); return summarizeDocumentRequest(msg); }
-    if (isDocumentMsg(msg.reply_to_message)) return summarizeDocumentRequest(msg.reply_to_message);
+    if (isDocumentMsg(msg)) return summarizeDocumentRequest(msg, false);
+    if (isDocumentMsg(msg.reply_to_message)) return summarizeDocumentRequest(msg.reply_to_message, false);
     const kw = text.replace("/summary", "").trim();
     return summarizeLatest(env, chatId, kw);
   }
@@ -445,8 +448,8 @@ async function route(env, msg) {
   // 아니면 저장된 최근 전사를 불러 요약한다. (한 요청에 STT+요약을 붙이지 않음)
   if (text.startsWith("/minutes") || /회의록|녹취록|녹취|받아쓰기/.test(text)) {
     if (isAudioMsg(msg.reply_to_message)) return handleVoice(env, chatId, msg.reply_to_message, true);
-    if (isDocumentMsg(msg)) { await collectMessage(env, msg); return summarizeDocumentRequest(msg); }
-    if (isDocumentMsg(msg.reply_to_message)) return summarizeDocumentRequest(msg.reply_to_message);
+    if (isDocumentMsg(msg)) return summarizeDocumentRequest(msg, true);
+    if (isDocumentMsg(msg.reply_to_message)) return summarizeDocumentRequest(msg.reply_to_message, true);
     return makeMinutesFromStored(env, chatId);
   }
   if (text.startsWith("/q ") || text === "/q") {
