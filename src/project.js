@@ -2,10 +2,22 @@
 
 import { getProjectTimeline } from "./db.js";
 import { sendMessage } from "./telegram.js";
-import { stripHtml, issueDate, issueScore, senderTag } from "./utils.js";
+import { stripHtml, issueDate, issueScore } from "./utils.js";
 
 const SEPARATOR = "━━━━━━━━━";
 const NOISE_RE = /지원 파일 형식|요약할 내용|권한이 없습니다|원문이 없습니다|^\s*$/;
+const PLACEHOLDER_RE = /^(?:내용\s*확인\s*필요|확인\s*필요|전사\s*내용\s*확인\s*필요|상세\s*확인\s*필요|요약\s*불가|없음|[-—])$/;
+
+function escapeHtml(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function code(text) {
+  return "<code>" + escapeHtml(text) + "</code>";
+}
 
 function normalizeProjectName(project) {
   const p = String(project || "").trim();
@@ -21,12 +33,22 @@ function projectSlug(project) {
   return displayProjectName(project).replace(/<[^>]+>/g, "").trim();
 }
 
+function isUnconfirmedSummary(summary) {
+  const s = stripHtml(summary || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return true;
+  if (PLACEHOLDER_RE.test(s)) return true;
+  if (/^\(?내용\s*확인\s*필요\)?$/i.test(s)) return true;
+  return false;
+}
+
 function cleanRows(rows) {
   const seen = new Set();
   const out = [];
   for (const row of rows || []) {
     const summary = stripHtml(row.summary || "");
-    if (!row.project || !summary || NOISE_RE.test(summary)) continue;
+    if (!row.project || isUnconfirmedSummary(summary) || NOISE_RE.test(summary)) continue;
     const key = [
       normalizeProjectName(row.project),
       row.source_ref || "",
@@ -75,6 +97,7 @@ function projectOneLine(text, limit) {
     .replace(/🎯\s*핵심:\s*/g, "")
     .replace(/📌\s*핵심:\s*/g, "")
     .replace(/\s+/g, " ")
+    .replace(/\s+\(([A-Za-z]{1,5}|[가-힣]{2,4})\)\s*$/g, "")
     .trim();
 
   const bullet = s.match(/(?:^|\s)•\s*([^•\n]+)/);
@@ -114,7 +137,7 @@ function projectOneLine(text, limit) {
 
 function formatItem(tag, row, brief) {
   const limit = brief ? 100 : 140;
-  return "  " + tag + " [" + issueDate(row) + "] " + projectOneLine(row.summary, limit) + senderTag(row);
+  return "  " + tag + " [" + issueDate(row) + "] " + projectOneLine(row.summary, limit);
 }
 
 function addMapEntry(map, tag, row) {
@@ -130,7 +153,7 @@ function addMapEntry(map, tag, row) {
 function formatOverviewGroup(groupNo, project, rows, map) {
   const sorted = rows.slice().sort(sortRows);
   const shown = recentRows(sorted, 2);
-  const lines = [groupNo + ". <b>" + displayProjectName(project) + "</b>"];
+  const lines = [groupNo + ". <b>" + escapeHtml(displayProjectName(project)) + "</b>"];
   let itemNo = 0;
   for (const row of shown) {
     itemNo++;
@@ -140,14 +163,14 @@ function formatOverviewGroup(groupNo, project, rows, map) {
   }
   const prog = progressLine(sorted);
   if (prog) lines.push("  경과: " + prog);
-  lines.push("  전체 보기: <code>/project " + projectSlug(project) + "</code>");
+  lines.push("  전체 보기: " + code("/project " + projectSlug(project)));
   lines.push("");
   return lines.join("\n");
 }
 
 function formatFullGroup(groupNo, project, rows, map) {
   const sorted = rows.slice().sort(sortRows);
-  const lines = [groupNo + ". <b>" + displayProjectName(project) + "</b> · 전체 " + sorted.length + "건", ""];
+  const lines = [groupNo + ". <b>" + escapeHtml(displayProjectName(project)) + "</b> · 전체 " + sorted.length + "건", ""];
   let itemNo = 0;
   for (const row of sorted) {
     itemNo++;
@@ -195,7 +218,7 @@ export async function runProjectBriefing(env, chatId, days, name) {
 
   const keys = Object.keys(groups).sort(function (a, b) { return displayProjectName(a).localeCompare(displayProjectName(b), "ko"); });
   const lines = [
-    "<b>프로젝트</b>" + (hasName ? " · " + displayProjectName(name) : " · 최근 1주일"),
+    "<b>프로젝트</b>" + (hasName ? " · " + escapeHtml(displayProjectName(name)) : " · 최근 1주일"),
     SEPARATOR,
     "",
   ];
@@ -210,8 +233,8 @@ export async function runProjectBriefing(env, chatId, days, name) {
   lines.push(SEPARATOR);
   lines.push("대외정보 /info · 핵심 /brief");
   lines.push(hasName
-    ? "항목 보기: <code>1-1 요약</code> 또는 <code>1-1 자료</code>"
-    : "전체 목록: <code>/project 프로젝트명</code> · 항목 보기: <code>1-1 요약</code>");
+    ? "항목 보기: " + code("1-1 요약") + " 또는 " + code("1-1 자료")
+    : "전체 목록: " + code("/project 프로젝트명") + " · 항목 보기: " + code("1-1 요약"));
 
   if (chatId) {
     try {
