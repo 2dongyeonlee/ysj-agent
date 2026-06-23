@@ -206,6 +206,10 @@ const VOICE_AUDIO_LIKE =
   "OR filename LIKE '%.opus' OR filename LIKE '%.amr' OR filename LIKE '%.flac' " +
   "OR filename LIKE '%voice%' OR filename LIKE '%녹음%')";
 
+function minutesTargetChat(env, fallbackChatId) {
+  return String((env && env.BRIEFING_TARGET_ID) || fallbackChatId || "");
+}
+
 // 매분 Cron 이 호출 — 대기 중인 녹음 1건을 받아쓰기. Cron 핸들러는 웹훅보다 실행시간이 길어
 // 긴 녹음도 처리 가능. 동시 실행은 KV 락으로 막고, 반복 실패는 시도 횟수로 끊는다.
 export async function runVoiceQueue(env) {
@@ -226,6 +230,7 @@ export async function runVoiceQueue(env) {
     const cands = (await env.DB.prepare(
       "SELECT id, chat_id, file_id, r2_key, filename, sender FROM files " +
       "WHERE (text IS NULL OR text = '') AND r2_key != '' AND " + VOICE_AUDIO_LIKE + " " +
+      "AND NOT EXISTS (SELECT 1 FROM files f2 WHERE f2.file_id = files.file_id AND f2.text != '') " +
       "AND created_at >= datetime('now','-2 hours') ORDER BY id ASC LIMIT 6"
     ).all()).results || [];
     let row = null;
@@ -286,6 +291,23 @@ export async function runVoiceQueue(env) {
         .bind(transcript.slice(0, 16000), minutes.full || null, row.id).run();
     } catch (e) { console.error("voice queue save error", row.id, e && e.message); }
 
+    if (!minutes.full) {
+      try {
+        const retry = await createMeetingMinutes(env, transcript);
+        minutes = {
+          short: retry.short || minutes.short || fallbackShortMinutes(transcript),
+          full: retry.full || retry.short || minutes.short || fallbackShortMinutes(transcript),
+        };
+        await env.DB.prepare("UPDATE files SET doc_type = 'meeting', full_minutes = ? WHERE id = ?")
+          .bind(minutes.full, row.id).run();
+      } catch (e) {
+        console.error("createMeetingMinutes retry error", row.id, e && e.message);
+        minutes.full = minutes.short || fallbackShortMinutes(transcript);
+        await env.DB.prepare("UPDATE files SET doc_type = 'meeting', full_minutes = ? WHERE id = ?")
+          .bind(minutes.full, row.id).run();
+      }
+    }
+
     try {
       await saveMeetingInsight(env, {
         chatId,
@@ -296,7 +318,7 @@ export async function runVoiceQueue(env) {
       });
     } catch (e) { console.error("voice queue saveMeetingInsight error", row.id, e && e.message); }
 
-    await sendMessage(env, chatId, minutes.short || fallbackShortMinutes(transcript));
+    await sendMessage(env, minutesTargetChat(env, chatId), minutes.short || fallbackShortMinutes(transcript));
   } finally {
     await env.STATE.delete("vq:lock");
   }

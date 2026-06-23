@@ -38,6 +38,12 @@ export async function searchMessages(env, keyword) {
 
 // ===== 파일 (기능2: 자료 전달) =====
 export async function saveFile(env, f) {
+  if (f.file_id && f.chat_id) {
+    const existing = await env.DB.prepare(
+      `SELECT id FROM files WHERE file_id = ? AND chat_id = ? LIMIT 1`
+    ).bind(f.file_id || "", String(f.chat_id)).first();
+    if (existing) return existing.id;
+  }
   await env.DB.prepare(
     `INSERT INTO files (chat_id, file_id, r2_key, filename, text, sender, doc_type, full_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
