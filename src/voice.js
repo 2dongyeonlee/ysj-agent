@@ -121,7 +121,7 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
   const sender = senderName(msg);
   const filename = voice.file_name || "voice.m4a";
   let meta = { category: "", project: "", filename, sender, isPhoto: false };
-  let transcript, transcriptTimed, audioBuf, r2Key = "";
+  let transcript, audioBuf, r2Key = "";
   try {
     const url = await getFileUrl(env, voice.file_id);
     audioBuf = await (await fetch(url)).arrayBuffer();
@@ -153,7 +153,6 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
   try {
     const tr = await transcribe(env, audioBuf, filename);
     transcript = tr.plain;
-    transcriptTimed = tr.timed;
   } catch (e) {
     console.error("voice transcribe error", e && e.message);
     return sendMessage(env, chatId, "받아쓰기에 실패했습니다. 원본 녹음은 저장했습니다. 파일이 길거나 음질이 낮으면 조금 짧게 나눠 다시 보내 주세요.");
@@ -201,14 +200,14 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
   try {
     const result = await env.DB.prepare(
       "UPDATE files SET r2_key = ?, text = ?, sender = ? WHERE file_id = ?"
-    ).bind(r2Key, transcript.slice(0, 5000), sender, voice.file_id).run();
+    ).bind(r2Key, transcript.slice(0, 16000), sender, voice.file_id).run();
     if (!result.meta || !result.meta.changes) {
       await saveFile(env, {
         chat_id: msg.chat.id,
         file_id: voice.file_id,
         r2_key: r2Key,
         filename,
-        text: transcript.slice(0, 5000),
+        text: transcript.slice(0, 16000),
         sender,
       });
     }
@@ -218,20 +217,43 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
 
   if (!replyToUser) return; // silent store only
 
-  // 1) 전사문을 먼저 전송 — 요약이 실패/지연돼도 최소한 받아쓰기는 받게 한다.
+  // STT/요약 분리: 여기서는 받아쓰기 전송까지만. 요약은 "회의록"/"/minutes" 로 별도 처리해
+  // 한 요청에 STT+요약을 붙이지 않는다(Workers 시간초과 원천 차단).
   const plainTr = (transcript || "").trim();
   if (plainTr) {
     const head = plainTr.slice(0, 3500);
-    await sendMessage(env, chatId, "🎙 받아쓰기 완료:\n\n" + head + (plainTr.length > 3500 ? "\n\n…(이하 생략, 전문은 저장됨)" : ""));
+    await sendMessage(env, chatId,
+      "🎙 받아쓰기 완료 (전문은 저장됨):\n\n" + head +
+      (plainTr.length > 3500 ? "\n\n…(이하 생략)" : "") +
+      "\n\n📝 회의록이 필요하면 '회의록' 또는 /minutes 라고 보내주세요.");
+  } else {
+    await sendMessage(env, chatId, "음성에서 텍스트를 추출하지 못했습니다.");
   }
+}
 
-  // 2) 회의록 요약 — 입력·출력 축소로 시간 내 완료 (Workers 한계 대응)
-  const transcriptForMinutes = (transcriptTimed || transcript || "").slice(0, 9000);
+// 저장된 최근 녹음 전사를 불러 회의록 작성 (STT와 분리된 별도 요청 — 요약에 전체 시간 사용 가능).
+export async function makeMinutesFromStored(env, chatId) {
+  let row = null;
   try {
-    const minutes = await callClaude(env, "아래는 받아쓰기 전문이다. 핵심 위주로 간결한 회의록을 작성하라.\n\n" + transcriptForMinutes, VOICE_SYSTEM, MODEL_SMART, 2200);
+    row = await env.DB.prepare(
+      "SELECT filename, text FROM files WHERE chat_id = ? AND text != '' " +
+      "AND (filename LIKE '%.m4a' OR filename LIKE '%.ogg' OR filename LIKE '%.oga' " +
+      "OR filename LIKE '%.mp3' OR filename LIKE '%.wav' OR filename LIKE '%voice%' OR filename LIKE '%녹음%') " +
+      "ORDER BY id DESC LIMIT 1"
+    ).bind(String(chatId)).first();
+  } catch (e) { console.error("minutes query error", e && e.message); }
+
+  if (!row || !row.text) {
+    return sendMessage(env, chatId, "최근 받아쓰기를 찾지 못했습니다. 녹음을 먼저 보내주세요.");
+  }
+  await sendMessage(env, chatId, "📝 회의록을 작성하는 중입니다...");
+  try {
+    const minutes = await callClaude(env,
+      "아래는 회의/간담회 받아쓰기 전문이다. 위 형식에 따라 충실한 회의록을 작성하라.\n\n" + String(row.text).slice(0, 16000),
+      VOICE_SYSTEM, MODEL_SMART, 3500);
     await sendMessage(env, chatId, minutes);
   } catch (e) {
-    console.error("voice minutes error", e && (e.stack || e.message));
-    await sendMessage(env, chatId, "회의록 요약은 시간이 초과됐지만, 위 받아쓰기와 원본은 저장됐습니다. '회의록 작성'이라고 답장하면 다시 시도합니다.");
+    console.error("makeMinutes error", e && (e.stack || e.message));
+    await sendMessage(env, chatId, "회의록 작성에 실패했습니다. 잠시 후 다시 '회의록'이라고 보내주세요.");
   }
 }

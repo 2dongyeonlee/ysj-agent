@@ -5,7 +5,7 @@ import { summarizeFile, summarizeLatest } from "./summarize.js";
 import { handleQA } from "./qa.js";
 import { runInfoBriefing } from "./info.js";
 import { runProjectBriefing } from "./project.js";
-import { handleVoice } from "./voice.js";
+import { handleVoice, makeMinutesFromStored } from "./voice.js";
 import { classifyIntent } from "./intent.js";
 import { sendMessage, sendDocument, sendDocumentBytes } from "./telegram.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
@@ -75,13 +75,14 @@ async function getFileUrlPublic(env, fileId) {
 
 const HELP =
   "📋 <b>사용 안내</b>\n\n" +
-  "자료는 자동 저장·분류되고, 녹음은 바로 회의록으로 작성됩니다.\n" +
+  "자료는 자동 저장·분류되고, 녹음은 받아쓰기 후 '회의록'이라고 보내면 회의록을 작성합니다.\n" +
   "궁금한 건 그냥 말씀하시면 됩니다.\n\n" +
   "<b>명령어</b>\n" +
   "• /brief — 오늘 챙길 것 (결정·만남·보고 건)\n" +
   "• /info — 대외정보 7일치 (정부·국회·BH·글로벌·언론)\n" +
   "• /project [이름] — 프로젝트 진행 경과\n" +
-  "• /summary [키워드] — 자료 요약\n\n" +
+  "• /summary [키워드] — 자료 요약\n" +
+  "• /minutes (또는 '회의록') — 최근 녹음으로 회의록 작성\n\n" +
   "<b>자연어 질문 예시</b>\n" +
   "• \"넥서스 어떻게 됐어?\" — 프로젝트 현황\n" +
   "• \"오늘 만남 뭐 있어?\" — 브리핑\n" +
@@ -397,6 +398,12 @@ async function route(env, msg) {
     if (isAudioMsg(msg.reply_to_message)) return handleVoice(env, chatId, msg.reply_to_message, true);
     const kw = text.replace("/summary", "").trim();
     return summarizeLatest(env, chatId, kw);
+  }
+  // 회의록 = STT와 분리된 별도 요청. reply 대상이 녹음이면 그것을 STT하고,
+  // 아니면 저장된 최근 전사를 불러 요약한다. (한 요청에 STT+요약을 붙이지 않음)
+  if (text.startsWith("/minutes") || text.trim() === "회의록" || text.trim() === "회의록 작성") {
+    if (isAudioMsg(msg.reply_to_message)) return handleVoice(env, chatId, msg.reply_to_message, true);
+    return makeMinutesFromStored(env, chatId);
   }
   if (text.startsWith("/q ") || text === "/q") {
     const q = text.replace(/^\/q\s*/, "").trim();
