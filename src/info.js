@@ -2,7 +2,7 @@
 
 import { getInfoInsightsSince } from "./db.js";
 import { sendMessage } from "./telegram.js";
-import { oneLine, issueDate, issueScore, senderTag, peopleText, stripHtml } from "./utils.js";
+import { oneLine, issueDate, issueScore, stripHtml } from "./utils.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
 
 function recentFirst(a, b) {
@@ -32,7 +32,6 @@ const INFO_SYSTEM = `당신은 염성진 사장에게 대외정보를 보고하�
 - 날짜는 원문에 명시된 사안일만 쓴다. 25/6처럼 일/월이면 6/25로 고친다. 30/0처럼 불가능한 날짜는 쓰지 말고 입력의 created 날짜 또는 "—"를 쓴다.
 - 분류는 정부 / BH / 국회 / 언론 / 글로벌 / 경쟁사 6개만 쓴다. 기타·내부 생성 금지.
 - 출력은 아래 양식만. 설명, 사족, 마크다운 ** 금지. 굵게는 HTML <b>만 사용.
-- 각 항목 끝에는 반드시 (공유자) 를 붙인다.
 - 각 카테고리 안에서 당사 직접 영향 건을 위로, 단순 인지 건은 끝에 "— 인지 수준"으로 짧게 쓴다.
 - 부등호(<, >)를 본문에 쓰지 말 것. "이상/이하/초과/미만"으로 표기한다.
 
@@ -48,23 +47,23 @@ const INFO_SYSTEM = `당신은 염성진 사장에게 대외정보를 보고하�
 대외정보 · {오늘}
 ━━━━━━━━━
 
-<b>[정부]</b>
-• [M/D] {안건 1줄} ({공유자})
+☑ <b>정부</b>
+• [M/D] {안건 1줄}
 
-<b>[BH]</b>
-• [M/D] {안건 1줄} ({공유자})
+☑ <b>BH</b>
+• [M/D] {안건 1줄}
 
-<b>[국회]</b>
-• [M/D] {안건 1줄} ({공유자})
+☑ <b>국회</b>
+• [M/D] {안건 1줄}
 
-<b>[언론]</b>
-• [M/D] {안건 1줄} ({공유자})
+☑ <b>언론</b>
+• [M/D] {안건 1줄}
 
-<b>[글로벌]</b>
-• [M/D] {안건 1줄} ({공유자})
+☑ <b>글로벌</b>
+• [M/D] {안건 1줄}
 
-<b>[경쟁사]</b>
-• [M/D] {안건 1줄} ({공유자})
+☑ <b>경쟁사</b>
+• [M/D] {안건 1줄}
 
 ━━━━━━━━━
 프로젝트 /project · 핵심 /brief`;
@@ -171,8 +170,8 @@ function cleanInfoOutput(text) {
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/📊\s*/g, "")
     .replace(/ℹ️\s*/g, "")
-    .replace(/^[ \t]*(?:🏢|🇰🇷|🌐|🏛|🗞)\s*<b>([^<]+)<\/b>/gm, "<b>[$1]</b>")
-    .replace(/^[ \t]*<b>(정부|BH|국회|언론|글로벌|경쟁사)<\/b>/gm, "<b>[$1]</b>")
+    .replace(/^[ \t]*(?:🏢|🇰🇷|🌐|🏛|🗞)\s*<b>([^<]+)<\/b>/gm, "☑ <b>$1</b>")
+    .replace(/^[ \t]*(?:☑|\[)?\s*<b>\[?(정부|BH|국회|언론|글로벌|경쟁사)\]?<\/b>\]?/gm, "☑ <b>$1</b>")
     .replace(/프로젝트\s*\/project\s*·\s*핵심\s*\/brief/g, "프로젝트 /project · 핵심 /brief")
     .trim();
 }
@@ -226,11 +225,9 @@ export async function runInfoBriefing(env, chatId, days) {
   for (const cat of INFO_CATEGORIES) {
     const grouped = visibleItems.filter(function (r) { return r.category === cat.name; });
     if (!grouped.length) continue;
-    lines.push("<b>[" + cat.name + "]</b>");
+    lines.push("☑ <b>" + cat.name + "</b>");
     for (const row of grouped) {
-      const who = peopleText(row);
-      const head = who ? "<b>" + who + "</b> — " : "";
-      lines.push("• [" + issueDate(row) + "] " + head + oneLine(row.summary) + senderTag(row));
+      lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary));
     }
     lines.push("");
   }
