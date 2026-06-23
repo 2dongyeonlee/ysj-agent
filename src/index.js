@@ -140,10 +140,14 @@ export default {
 
 async function route(env, msg) {
   const chatId = msg.chat.id;
-  const text = (msg.text || msg.caption || "").trim();
   const botUsername = env.BOT_USERNAME || "";
-  // 봇을 직접 부른 것인지(자동 발화 방지용). DM이거나 @멘션이면 '말을 건 것'.
-  const isMentioned = !!botUsername && text.indexOf("@" + botUsername) !== -1;
+  const rawText = (msg.text || msg.caption || "").trim();
+  // 단체방 멘션 여부를 먼저 기억(자연어 게이트용), 그 뒤 @봇이름을 제거해 명령·자연어를 정규화
+  const wasMentioned = !!(botUsername && rawText.indexOf("@" + botUsername) !== -1);
+  const text = botUsername
+    ? rawText.replace(new RegExp("@" + botUsername + "\\b\\s*", "ig"), "").trim()
+    : rawText;
+  const isMentioned = wasMentioned;
   const isDM = msg.chat.type === "private";
 
   const key = "msg:" + chatId + ":" + msg.message_id;
@@ -511,8 +515,7 @@ async function route(env, msg) {
     return;
   }
   if (msg.document || (msg.photo && msg.photo.length)) {
-    const mentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
-    await summarizeFile(env, chatId, msg, mentioned);
+    await summarizeFile(env, chatId, msg, wasMentioned);
     return;
   }
 
@@ -521,7 +524,7 @@ async function route(env, msg) {
     return handleVoice(env, chatId, msg.reply_to_message, true);
   }
   if (isDocumentMsg(msg.reply_to_message) && text && text.length >= 2 && !text.startsWith("/")) {
-    const inst = text.split("@" + botUsername).join("").trim();
+    const inst = text;
     return customSummarizeDoc(env, chatId, msg.reply_to_message, inst);
   }
 
@@ -534,7 +537,7 @@ async function route(env, msg) {
 
   // Both 1:1 and group-mention go through the SAME natural-language routing,
   // so answers are identical in quality. Group: only when mentioned. 1:1: always.
-  const cleanText = text.split("@" + botUsername).join("").trim();
+  const cleanText = text;
   if ((isDM && text) || isMentioned) {
     const { intent, target } = await classifyIntent(env, cleanText);
     switch (intent) {
