@@ -176,6 +176,16 @@ export async function runVoiceQueue(env) {
   if (await env.STATE.get("vq:lock")) return; // 이미 처리 중
   await env.STATE.put("vq:lock", "1", { expirationTtl: 170 });
   try {
+    // 1) 회의록 작성 대기 작업 우선 처리(사용자가 기다리는 중). 한 번에 1건.
+    const mj = await env.STATE.list({ prefix: "mj:" });
+    if (mj.keys && mj.keys.length) {
+      const key = mj.keys[0].name;
+      await env.STATE.delete(key);
+      await generateMinutes(env, key.slice(3)); // "mj:" 제거 → chatId
+      return;
+    }
+
+    // 2) 받아쓰기 대기 처리.
     const row = await env.DB.prepare(
       "SELECT id, chat_id, file_id, r2_key, filename, sender FROM files " +
       "WHERE (text IS NULL OR text = '') AND r2_key != '' AND " + VOICE_AUDIO_LIKE + " " +
@@ -244,29 +254,43 @@ export async function runVoiceQueue(env) {
   }
 }
 
-// 저장된 최근 녹음 전사를 불러 회의록 작성 (STT와 분리된 별도 요청 — 요약에 전체 시간 사용 가능).
-export async function makeMinutesFromStored(env, chatId) {
-  let row = null;
+// 저장된 최근 녹음 전사 조회.
+async function latestTranscript(env, chatId) {
   try {
-    row = await env.DB.prepare(
+    return await env.DB.prepare(
       "SELECT filename, text FROM files WHERE chat_id = ? AND text != '' AND text NOT LIKE '[받아쓰기 실패%' " +
       "AND (filename LIKE '%.m4a' OR filename LIKE '%.ogg' OR filename LIKE '%.oga' " +
       "OR filename LIKE '%.mp3' OR filename LIKE '%.wav' OR filename LIKE '%voice%' OR filename LIKE '%녹음%') " +
       "ORDER BY id DESC LIMIT 1"
     ).bind(String(chatId)).first();
-  } catch (e) { console.error("minutes query error", e && e.message); }
+  } catch (e) { console.error("minutes query error", e && e.message); return null; }
+}
 
+// 회의록 요청 접수 — 생성은 여기서 하지 않는다. 전사 존재만 확인하고 작업을 큐(KV)에 넣은 뒤
+// 즉시 안내한다. 실제 회의록 생성(LLM)은 매분 Cron(generateMinutes)이 처리한다.
+// (긴 전사의 회의록 생성도 웹훅 백그라운드 한도를 넘겨 멈추므로 Cron으로 분리.)
+export async function makeMinutesFromStored(env, chatId) {
+  const row = await latestTranscript(env, chatId);
   if (!row || !row.text) {
     return sendMessage(env, chatId, "최근 받아쓰기를 찾지 못했습니다. 녹음을 먼저 보내주세요.");
   }
-  await sendMessage(env, chatId, "📝 회의록을 작성하는 중입니다...");
+  await env.STATE.put("mj:" + chatId, String(Date.now()), { expirationTtl: 3600 });
+  return sendMessage(env, chatId, "📝 회의록을 작성하는 중입니다... 1~2분 내 도착합니다.");
+}
+
+// Cron 이 호출 — 저장된 전사로 회의록을 생성해 전송.
+export async function generateMinutes(env, chatId) {
+  const row = await latestTranscript(env, chatId);
+  if (!row || !row.text) {
+    return sendMessage(env, chatId, "최근 받아쓰기를 찾지 못했습니다. 녹음을 먼저 보내주세요.");
+  }
   try {
     const minutes = await callClaude(env,
       "아래는 회의/간담회 받아쓰기 전문이다. 위 형식에 따라 충실한 회의록을 작성하라.\n\n" + String(row.text).slice(0, 16000),
       VOICE_SYSTEM, MODEL_SMART, 3500);
     await sendMessage(env, chatId, minutes);
   } catch (e) {
-    console.error("makeMinutes error", e && (e.stack || e.message));
+    console.error("generateMinutes error", e && (e.stack || e.message));
     await sendMessage(env, chatId, "회의록 작성에 실패했습니다. 잠시 후 다시 '회의록'이라고 보내주세요.");
   }
 }
