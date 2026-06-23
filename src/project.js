@@ -139,7 +139,7 @@ function formatOverviewGroup(groupNo, project, rows, map) {
     lines.push(formatItem(tag, row, true));
   }
   const prog = progressLine(sorted);
-  if (prog) lines.push("  🔍 경과: " + prog);
+  if (prog) lines.push("  경과: " + prog);
   lines.push("  전체 보기: <code>/project " + projectSlug(project) + "</code>");
   lines.push("");
   return lines.join("\n");
@@ -156,7 +156,7 @@ function formatFullGroup(groupNo, project, rows, map) {
     lines.push(formatItem(tag, row, false));
   }
   const prog = progressLine(sorted);
-  if (prog) lines.push("  🔍 경과: " + prog);
+  if (prog) lines.push("  경과: " + prog);
   lines.push("");
   return lines.join("\n");
 }
@@ -195,7 +195,7 @@ export async function runProjectBriefing(env, chatId, days, name) {
 
   const keys = Object.keys(groups).sort(function (a, b) { return displayProjectName(a).localeCompare(displayProjectName(b), "ko"); });
   const lines = [
-    "📂 <b>프로젝트</b>" + (hasName ? " · " + displayProjectName(name) : " · 최근 1주일"),
+    "<b>프로젝트</b>" + (hasName ? " · " + displayProjectName(name) : " · 최근 1주일"),
     SEPARATOR,
     "",
   ];
@@ -208,10 +208,10 @@ export async function runProjectBriefing(env, chatId, days, name) {
       : formatOverviewGroup(groupNo, key, groups[key], fullMap));
   }
   lines.push(SEPARATOR);
-  lines.push("ℹ️ 대외정보 /info · 핵심 /brief");
+  lines.push("대외정보 /info · 핵심 /brief");
   lines.push(hasName
-    ? "💡 항목 보기: <code>1-1 요약</code> 또는 <code>1-1 자료</code>"
-    : "💡 전체 목록: <code>/project 프로젝트명</code> · 항목 보기: <code>1-1 요약</code>");
+    ? "항목 보기: <code>1-1 요약</code> 또는 <code>1-1 자료</code>"
+    : "전체 목록: <code>/project 프로젝트명</code> · 항목 보기: <code>1-1 요약</code>");
 
   if (chatId) {
     try {

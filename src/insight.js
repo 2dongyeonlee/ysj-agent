@@ -5,7 +5,7 @@ import { callClaude, MODEL_FAST } from "./claude.js";
 import { getProjectKeywords, updateInsightDone } from "./db.js";
 import { stripSalutation } from "./utils.js";
 
-const INFO_CATEGORIES = ["정부", "국회", "BH", "글로벌", "언론", "내부", "기타"];
+const INFO_CATEGORIES = ["정부", "국회", "BH", "글로벌", "언론", "경쟁사", "내부", "기타"];
 
 const EXTRACT_SYSTEM = `당신은 염성진 사장 자료 분류 비서다.
 JSON만 반환하라. 마크다운 금지.
@@ -14,11 +14,11 @@ JSON만 반환하라. 마크다운 금지.
 1. 자료 성격을 먼저 판정:
    - 아래 [등록된 프로젝트] 중 하나에 관한 자료 → project=그 프로젝트명, category 비움
      (키워드가 정확히 안 보여도 내용 맥락이 그 프로젝트면 그 프로젝트로 분류한다)
-   - 어느 프로젝트에도 안 맞는 대외정보(외부 정세·대면 활동) → category=7개 중 하나, project 비움
+   - 어느 프로젝트에도 안 맞는 대외정보(외부 정세·대면 활동) → category=8개 중 하나, project 비움
    - 내부 보고/운영계획(O/I 등) → category=내부, project 비움
-2. category는 7개 중 하나로 반드시 채운다(빈 값 금지): 정부 / 국회 / BH / 글로벌 / 언론 / 내부 / 기타
+2. category는 8개 중 하나로 반드시 채운다(빈 값 금지): 정부 / 국회 / BH / 글로벌 / 언론 / 경쟁사 / 내부 / 기타
    - 내부: 사내 발언·회의·타운홀·운영계획·조직문화 등 내부 자료
-   - 기타: 위 6개 어디에도 안 맞을 때만 (최후의 보루, 남발 금지)
+   - 기타: 위 7개 어디에도 안 맞을 때만 (최후의 보루, 남발 금지)
    - "정책"·"언론PR" 쓰지 말 것 → 정부·언론으로.
 3. 대면 활동도 대외정보다. 만난 상대 소속으로 category 분류(정부 인사 면담→정부).
 4. project는 nexus/넥서스 표기를 'nexus'로 통일.
@@ -30,7 +30,7 @@ decision·followup 컬럼은 사용하지 않는다. 결정사항은 summary에 
 스키마:
 {
   "kind": "project | info | internal",
-  "category": "정부, 국회, BH, 글로벌, 언론, 내부, 기타 중 하나. 반드시 채운다(빈 값 금지). kind가 project면 빈 문자열",
+  "category": "정부, 국회, BH, 글로벌, 언론, 경쟁사, 내부, 기타 중 하나. 반드시 채운다(빈 값 금지). kind가 project면 빈 문자열",
   "project": "프로젝트명. nexus/넥서스는 nexus. kind가 project가 아니면 빈 문자열",
   "schedule": "날짜+안건. 없으면 빈 문자열",
   "summary": "핵심을 구체적으로 담은 1줄(50~70자). 본문에 있는 구체값(금액·숫자·대상·일시·장소·참석자·기관명)을 반드시 포함해 '무엇을 누가 얼마/언제'가 드러나게. 막연한 표현('지원 내용 발표', '과제 보고') 금지 — 본문에 구체 내용이 있으면 그것을 요약하고, 본문에도 없으면 '(내용 확인 필요)'로 표기. 인사말('사장님' 등 호칭)·머리표·불릿·이모지·제목 형식 금지. '사장님'으로 시작 금지.",
@@ -189,6 +189,7 @@ export function normalizeCategory(value) {
 const INFO_KEYWORD_RULES = [
   { category: "BH", re: /BH|대통령실|대통령|국정상황실|정무수석|비서실장|수석비서관|총리|인선/ },
   { category: "언론", re: /언론|기사|보도|취재|기자|인터뷰|PR|홍보|광고|방송|유튜브|타임스퀘어|CNBC|블룸버그TV|로이터|워싱턴포스트|중앙일보|조선일보|미디어/ },
+  { category: "경쟁사", re: /경쟁사|B社|C社|삼성전자|삼성|파운드리|테슬라|Tesla|Taylor\s*Fab|평택|P5\b|용인클러스터|공사인력|인력유출|HBM4E|HBM 경쟁|추격/ },
   { category: "글로벌", re: /글로벌|해외|외신|미국|중국|일본|대만|EU|유럽|워싱턴|뉴욕|통상|관세|수출규제|상무부|ASML|NVIDIA|Microsoft|AWS|Anthropic|Micron|CXMT|UNEP|GGGI|나스닥|ADR/ },
   { category: "국회", re: /국회|의원실|국회의원|상임위|법안|정당|민주당|국민의힘|정책위의장|입법|보좌관|국회법/ },
   { category: "정부", re: /정부|장관|차관|부처|산업부|산업통상자원부|고용노동부|고용부|기후부|환경부|공정위|공정거래위원회|과기부|국토부|교육부|규제기관|인수위|도지사|시장|산단|클러스터|정책|규제/ },
@@ -351,7 +352,7 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
     const projects = matchedProjects.length ? matchedProjects : (llmProject ? [llmProject] : []);
     const kind = String(parsed.kind || "").trim();
     const isProject = projects.length || kind === "project";
-    // project면 category 공란(프로젝트로 분류됨), 아니면 반드시 7개 중 하나 — 비면 "기타".
+    // project면 category 공란(프로젝트로 분류됨), 아니면 반드시 8개 중 하나 — 비면 "기타".
     const category = isProject ? "" : classifyInfoCategory(matchText, parsed.category);
     const project = isProject ? (projects[0] || llmProject) : "";
     // 머리표("[보고요망]" 등)·인사말("사장님" 등)을 summary 본문에 박지 않는다.

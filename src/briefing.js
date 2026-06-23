@@ -7,7 +7,7 @@ import { PERSONA_STYLE } from "./persona.js";
 import { stripHtml, oneLine, issueDate, issueScore, senderTag } from "./utils.js";
 
 const SEPARATOR = "━━━━━━━━━";
-const INFO_CATEGORIES = ["정부", "국회", "BH", "글로벌", "언론"];
+const INFO_CATEGORIES = ["정부", "국회", "BH", "글로벌", "언론", "경쟁사"];
 const INTERNAL_PERSON_RE = /염성진|윤풍영|SK그룹 의장|커뮤니케이션위원장|SK그룹|SKHY|SKALA|Hy-Five|해당 사장|TF 총괄|Steering Committee|작의장|CR팀|미래전략/;
 const EXTERNAL_AFFIL_RE = /장관|차관|고용노동부|산업통상자원부|산업부|과기부|정부|국회|의원|BH|대통령|총리|비서실|수석|CEO|해외|글로벌/;
 const CHATTER_RE = /^(안녕하세요|감사합니다|네|넵|오 |아 |음|제가 |저장을|따로|보내주신|일정도|최근|여기까지|잘 |좋|맞아요|이해를|가능|\/|@)/;
@@ -23,13 +23,13 @@ const BRIEF_SYSTEM = PERSONA_STYLE + "\n\n" +
   "- 저장된 summary 첫 줄을 베끼지 말고, 원문 전체를 읽어 사장 보고용 1줄로 다시 쓴다.\n" +
   "- 표지문, 목차, 'For Discussion Purpose Only', '사장님.' 같은 껍데기 문구는 버린다.\n\n" +
   "[섹션 정의]\n" +
-  "1) 🚨 결정·확인 필요\n" +
+  "1) 결정·확인 필요\n" +
   "- 사장이 직접 판단·승인·확인해야 하는 항목만. 단순 정보/뉴스/토의용 자료는 넣지 않는다.\n" +
   "- '검토중', '토의용', 'For Discussion Purpose Only'는 결정이 아니다. 확인 필요가 명시되지 않으면 제외한다.\n\n" +
-  "2) 🤝 만남 (외부)\n" +
+  "2) 만남 (외부)\n" +
   "- 외부 인사와의 실제/예정 면담·간담회·미팅만.\n" +
   "- 사내 인물, 문서 속 언급 인물, 뉴스 속 인물은 제외한다.\n\n" +
-  "3) 📋 보고 건\n" +
+  "3) 보고 건\n" +
   "- 사내 보고자료 또는 사장이 준비해서 말해야 하는 발표·회의·행사 보고.\n" +
   "- O/I, TF, CR, AX, 운영계획, 추진 현황, 발표자료는 이 섹션에 넣는다.\n" +
   "- 형식 예: • [6/24] O/I 보고 자료 — CR 지원팀 입법 패키지·AX 운영계획·추진 일정 포함 (동균)\n" +
@@ -41,13 +41,13 @@ const BRIEF_SYSTEM = PERSONA_STYLE + "\n\n" +
   "- 아래 양식만 출력. 없는 섹션은 '• 없음' 한 줄.\n" +
   "- 각 항목은 1줄, 90자 안팎. 내용이 메인이다.\n" +
   "- 굵게는 HTML <b>만 사용. 마크다운 ** 금지.\n\n" +
-  "🗞 브리핑 · {오늘}\n" +
+  "브리핑 · {오늘}\n" +
   "━━━━━━━━━\n\n" +
-  "🚨 <b>결정·확인 필요</b>\n" +
+  "<b>[결정·확인 필요]</b>\n" +
   "• [M/D] {사장이 결정/확인할 내용} ({공유자})\n\n" +
-  "🤝 <b>만남 (외부)</b>\n" +
+  "<b>[만남(외부)]</b>\n" +
   "• [M/D] <b>{외부 인물}</b> {소속/직책} — {만남 목적} ({공유자})\n\n" +
-  "📋 <b>보고 건</b>\n" +
+  "<b>[보고 건]</b>\n" +
   "• [M/D] {보고자료명/회의명} — {핵심 내용 2~3개 압축} ({공유자})\n\n" +
   "━━━━━━━━━";
 
@@ -186,7 +186,7 @@ function cleanBriefOutput(text) {
     .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
     .replace(/<br\s*\/?>/gi, "\n")
     .trim();
-  if (!out.includes("🗞 브리핑") || !out.includes("📋")) return "";
+  if (!out.includes("브리핑") || !out.includes("[보고 건]")) return "";
   return out;
 }
 
@@ -241,8 +241,8 @@ export async function runBrief(env, chatId) {
   const meetings = uniqueRows(infoRows.filter(isMeetingRow).filter(isTodayOrFuture)).sort(byImminence).slice(0, 4);
   const reports = uniqueRows(workRows.filter(isReportRow).filter(isTodayOrFuture)).sort(byImminence).slice(0, 5);
 
-  const lines = ["🗞 브리핑 · " + todayText(), SEPARATOR, ""];
-  lines.push("🚨 <b>결정·확인 필요</b>");
+  const lines = ["브리핑 · " + todayText(), SEPARATOR, ""];
+  lines.push("<b>[결정·확인 필요]</b>");
   if (decisions.length) {
     for (const row of decisions) lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
   } else {
@@ -250,7 +250,7 @@ export async function runBrief(env, chatId) {
   }
   lines.push("");
 
-  lines.push("🤝 <b>만남 (외부)</b>");
+  lines.push("<b>[만남(외부)]</b>");
   if (meetings.length) {
     for (const row of meetings) {
       const people = externalPeople(row).map(function (p) { return "<b>" + p + "</b>"; }).join(" · ");
@@ -261,7 +261,7 @@ export async function runBrief(env, chatId) {
   }
   lines.push("");
 
-  lines.push("📋 <b>보고 건</b>");
+  lines.push("<b>[보고 건]</b>");
   if (reports.length) {
     for (const row of reports) lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
   } else {
