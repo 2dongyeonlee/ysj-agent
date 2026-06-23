@@ -142,6 +142,9 @@ async function route(env, msg) {
   const chatId = msg.chat.id;
   const text = (msg.text || msg.caption || "").trim();
   const botUsername = env.BOT_USERNAME || "";
+  // 봇을 직접 부른 것인지(자동 발화 방지용). DM이거나 @멘션이면 '말을 건 것'.
+  const isMentioned = !!botUsername && text.indexOf("@" + botUsername) !== -1;
+  const isDM = msg.chat.type === "private";
 
   const key = "msg:" + chatId + ":" + msg.message_id;
   if (await env.STATE.get(key)) return;
@@ -465,16 +468,18 @@ async function route(env, msg) {
     const kw = text.replace("/summary", "").trim();
     return summarizeLatest(env, chatId, kw);
   }
-  // 회의록 = STT와 분리된 별도 요청. reply 대상이 녹음이면 그것을 STT하고,
-  // 아니면 저장된 최근 전사를 불러 요약한다. (한 요청에 STT+요약을 붙이지 않음)
-  if (text.startsWith("/minutes") || /회의록|녹취록|녹취|받아쓰기/.test(text)) {
+  // 회의록 = STT와 분리된 별도 요청. 평범한 대화에 '회의록' 단어가 있다고 자동 생성하지 않는다.
+  // 명령(/minutes)이거나, 봇을 직접 부른(DM·멘션) 자연어이거나, 특정 항목(녹음/문서)에 대한 답장일 때만.
+  if (text.startsWith("/minutes")
+      || ((isDM || isMentioned) && /회의록|녹취록|녹취|받아쓰기/.test(text))
+      || (isAudioMsg(msg.reply_to_message) && /회의록|녹취|받아쓰기|정리|요약/.test(text))) {
     if (isAudioMsg(msg.reply_to_message)) return handleVoice(env, chatId, msg.reply_to_message, true);
     if (isDocumentMsg(msg)) return summarizeDocumentRequest(msg, true);
     if (isDocumentMsg(msg.reply_to_message)) return summarizeDocumentRequest(msg.reply_to_message, true);
     return makeMinutesFromStored(env, chatId);
   }
-  // 녹음 없이 최근 텍스트 대화를 묶어 회의록으로 정리. /회의요약 [개수] (기본 30)
-  if (text.startsWith("/회의요약") || /회의\s*요약|방금.*회의|위.*회의.*요약/.test(text)) {
+  // 녹음 없이 최근 텍스트 대화를 묶어 회의록으로 정리. 명령 또는 봇을 직접 부른 경우만.
+  if (text.startsWith("/회의요약") || ((isDM || isMentioned) && /회의\s*요약/.test(text))) {
     const n = parseInt((text.match(/\d+/) || [])[0], 10) || 30;
     return summarizeRecentMessages(env, chatId, n);
   }
@@ -521,8 +526,7 @@ async function route(env, msg) {
   }
 
   // text: groups need mention; 1:1 uses natural-language intent classification.
-  const isMentioned = botUsername && text.indexOf("@" + botUsername) !== -1;
-  const isDM = msg.chat.type === "private";
+  // (isMentioned·isDM 은 route 상단에서 정의됨)
 
   // 전달·공유태그·보고문은 '자료 적재'다. 위 collectMessage 로 이미 저장됐으니
   // 자동 응답(브리핑/요약)은 띄우지 않는다. 단, 봇을 직접 멘션했으면 말을 건 것이므로 응답.
