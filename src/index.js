@@ -146,9 +146,8 @@ async function route(env, msg) {
         "<code>ADMIN_CHAT_ID = " + chatId + "</code>\n추가 후 저장하세요(재배포 불필요)."));
   }
 
-  // 녹음 큐 진단 (권한자만): 최근 오디오 행의 방(chat_id)·전사 상태·R2 여부를 그대로 보여준다.
+  // 녹음 큐 진단(읽기 전용): 최근 오디오 행의 방(chat_id)·전사 상태·R2 여부를 그대로 보여준다.
   if (text === "/vq") {
-    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다.");
     const { results } = await env.DB.prepare(
       "SELECT id, chat_id, filename, sender, r2_key, " +
       "CASE WHEN text IS NULL OR text = '' THEN '대기' WHEN text LIKE '[받아쓰기 실패%' THEN '실패' ELSE ('완료(' || length(text) || '자)') END AS st, " +
