@@ -72,6 +72,10 @@ async function extractPdf(env, url) {
     }),
   });
   const data = await r.json();
+  if (!r.ok || data.error) {
+    console.error("extractPdf error", data.error && (data.error.message || data.error.type) || r.status);
+    return "";
+  }
   return (data.content || []).filter(c => c.type === "text").map(c => c.text).join("\n") || "[document parse failed]";
 }
 

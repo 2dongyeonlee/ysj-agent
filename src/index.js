@@ -432,8 +432,9 @@ async function route(env, msg) {
   }
   // 회의록 = STT와 분리된 별도 요청. reply 대상이 녹음이면 그것을 STT하고,
   // 아니면 저장된 최근 전사를 불러 요약한다. (한 요청에 STT+요약을 붙이지 않음)
-  if (text.startsWith("/minutes") || text.trim() === "회의록" || text.trim() === "회의록 작성") {
+  if (text.startsWith("/minutes") || /회의록|녹취록|녹취|받아쓰기/.test(text)) {
     if (isAudioMsg(msg.reply_to_message)) return handleVoice(env, chatId, msg.reply_to_message, true);
+    if (isDocumentMsg(msg.reply_to_message)) return summarizeFile(env, chatId, msg.reply_to_message, true);
     return makeMinutesFromStored(env, chatId);
   }
   if (text.startsWith("/q ") || text === "/q") {
@@ -448,6 +449,9 @@ async function route(env, msg) {
     return !!(m.voice || m.audio
       || (m.document && (/audio/i.test(m.document.mime_type || "")
           || /\.(ogg|oga|mp3|m4a|wav|aac|opus|flac|amr)$/i.test(m.document.file_name || ""))));
+  }
+  function isDocumentMsg(m) {
+    return !!(m && (m.document || (m.photo && m.photo.length)));
   }
   const selfAudio = isAudioMsg(msg);
   const repliedAudio = isAudioMsg(msg.reply_to_message);
