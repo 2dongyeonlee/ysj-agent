@@ -304,7 +304,23 @@ async function route(env, msg) {
     const names = Object.keys(map);
     if (!names.length) return sendMessage(env, chatId, "등록된 프로젝트가 없습니다.");
     const body = names.map(function (p) { return "• <b>" + p + "</b>: " + map[p].join(", "); }).join("\n");
-    return sendMessage(env, chatId, "📑 <b>프로젝트 키워드</b>\n\n" + body);
+    // 키워드 충돌 진단: 같은 키워드가 2개 이상 프로젝트에 등록되면 오분류 원인이 됨.
+    const owners = {}; // 정규화 키워드 → Set(프로젝트)
+    for (const p of names) {
+      for (const kw of map[p]) {
+        const k = String(kw || "").trim().toLowerCase().replace(/[\s\-]/g, "");
+        if (!k) continue;
+        (owners[k] = owners[k] || new Set()).add(p);
+      }
+    }
+    const clashes = Object.keys(owners)
+      .filter(function (k) { return owners[k].size > 1; })
+      .map(function (k) { return "  ⚠️ <code>" + k + "</code> → " + Array.from(owners[k]).join(" / "); });
+    const warn = clashes.length
+      ? "\n\n⚠️ <b>겹치는 키워드(오분류 원인)</b>\n" + clashes.join("\n") +
+        "\n같은 키워드가 여러 프로젝트에 있으면 어디로 갈지 임의로 정해집니다. /delproject 로 한쪽을 정리하세요."
+      : "";
+    return sendMessage(env, chatId, "📑 <b>프로젝트 키워드</b>\n\n" + body + warn);
   }
   if (text.startsWith("/delproject")) {
     if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다. /whoami 로 chat_id 확인 후 ADMIN_CHAT_ID 에 등록하세요.");

@@ -127,19 +127,28 @@ export function matchProjects(keywords, caption, filename, body) {
   ];
   for (const tier of tiers) {
     if (!tier.src) continue;
-    const hit = [];
+    const hits = {}; // project → 매칭된 키워드 중 최장 길이(구체성)
     for (const row of keywords) {
       const kw = String(row.keyword || "").toLowerCase();
       if (!kw) continue;
       if (tier.body && compactLen(kw) <= 2) continue; // 본문에서는 2자 이하 키워드 무시
       const project = normalizeProject(row.project);
       if (project === "PR 중요기사") {
-        if (capLower.indexOf("pr중요기사") === 0 && hit.indexOf(project) === -1) hit.push(project);
+        if (capLower.indexOf("pr중요기사") === 0) hits[project] = 99;
         continue;
       }
-      if (tier.src.indexOf(kw) !== -1 && hit.indexOf(project) === -1) hit.push(project);
+      if (tier.src.indexOf(kw) !== -1) {
+        const len = compactLen(kw);
+        if (!(project in hits) || len > hits[project]) hits[project] = len;
+      }
     }
-    if (hit.length) return hit;
+    const names = Object.keys(hits);
+    if (names.length) {
+      // 더 구체적인(긴) 키워드로 잡힌 프로젝트를 앞에. 호출부는 [0]을 사용하므로
+      // '서남권'(3자) vs '용인 클러스터'(6자)가 동시에 잡히면 후자가 우선된다.
+      names.sort(function (a, b) { return hits[b] - hits[a]; });
+      return names;
+    }
   }
   if (capLower.indexOf("pr중요기사") === 0) return ["PR 중요기사"];
   return [];
