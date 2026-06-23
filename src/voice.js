@@ -389,6 +389,24 @@ export async function createMeetingMinutes(env, transcript) {
   return { short, full };
 }
 
+// 녹음 없이 최근 텍스트 대화를 묶어 회의록으로 정리. 슬래시 명령은 제외.
+export async function summarizeRecentMessages(env, chatId, n) {
+  const lim = Math.max(5, Math.min(parseInt(n, 10) || 30, 100));
+  const { results } = await env.DB.prepare(
+    "SELECT sender, text FROM messages WHERE chat_id = ? AND text != '' " +
+    "AND text NOT LIKE '/%' ORDER BY id DESC LIMIT ?"
+  ).bind(String(chatId), lim).all();
+  if (!results || !results.length) return sendMessage(env, chatId, "요약할 최근 대화가 없습니다.");
+  const merged = results.reverse()
+    .map(function (r) { return (r.sender ? r.sender + ": " : "") + r.text; })
+    .join("\n");
+  if (merged.length < 30) return sendMessage(env, chatId, "요약할 내용이 충분하지 않습니다.");
+  const minutes = await createMeetingMinutes(env, merged);   // 기존 회의록 생성 재사용
+  let body = (minutes && (minutes.full || minutes.short)) || "회의록 생성 실패.";
+  if (/미상|미정/.test(body)) body += "\n\n날짜·참석 명단·주요 아젠다를 알려주시면 반영해 다시 작성해 드립니다.";
+  return sendMessage(env, chatId, body);
+}
+
 async function saveMeetingInsight(env, row) {
   await env.DB.prepare(
     "INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, sender, input_chars, read_chars) " +

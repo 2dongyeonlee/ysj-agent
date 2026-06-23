@@ -5,7 +5,7 @@ import { enqueueDocumentSummary, runDocumentSummaryQueue, summarizeFile, summari
 import { handleQA } from "./qa.js";
 import { runInfoBriefing } from "./info.js";
 import { runProjectBriefing } from "./project.js";
-import { handleVoice, makeMinutesFromStored, regenerateMinutesWithMeta, runVoiceQueue } from "./voice.js";
+import { handleVoice, makeMinutesFromStored, regenerateMinutesWithMeta, runVoiceQueue, summarizeRecentMessages } from "./voice.js";
 import { classifyIntent } from "./intent.js";
 import { sendMessage, sendDocument, sendDocumentBytes } from "./telegram.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
@@ -472,6 +472,11 @@ async function route(env, msg) {
     if (isDocumentMsg(msg)) return summarizeDocumentRequest(msg, true);
     if (isDocumentMsg(msg.reply_to_message)) return summarizeDocumentRequest(msg.reply_to_message, true);
     return makeMinutesFromStored(env, chatId);
+  }
+  // 녹음 없이 최근 텍스트 대화를 묶어 회의록으로 정리. /회의요약 [개수] (기본 30)
+  if (text.startsWith("/회의요약") || /회의\s*요약|방금.*회의|위.*회의.*요약/.test(text)) {
+    const n = parseInt((text.match(/\d+/) || [])[0], 10) || 30;
+    return summarizeRecentMessages(env, chatId, n);
   }
   if (text.startsWith("/q ") || text === "/q") {
     const q = text.replace(/^\/q\s*/, "").trim();
