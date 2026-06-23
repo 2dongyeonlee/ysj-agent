@@ -5,7 +5,7 @@ import { summarizeFile, summarizeLatest } from "./summarize.js";
 import { handleQA } from "./qa.js";
 import { runInfoBriefing } from "./info.js";
 import { runProjectBriefing } from "./project.js";
-import { handleVoice, makeMinutesFromStored } from "./voice.js";
+import { handleVoice, makeMinutesFromStored, runVoiceQueue } from "./voice.js";
 import { classifyIntent } from "./intent.js";
 import { sendMessage, sendDocument, sendDocumentBytes } from "./telegram.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
@@ -107,6 +107,12 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
+    // 매분 Cron — 대기 중인 녹음 받아쓰기(STT). 웹훅보다 실행시간이 길어 긴 녹음도 처리.
+    if (event.cron === "* * * * *") {
+      ctx.waitUntil(runVoiceQueue(env).catch((e) => console.error("voice queue error", (e && e.stack) || e)));
+      return;
+    }
+    // 평일 아침 브리핑.
     ctx.waitUntil((async function () {
       await runMorningBriefing(env);
       await runInfoBriefing(env, null, 7);
