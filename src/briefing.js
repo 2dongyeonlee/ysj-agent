@@ -166,7 +166,7 @@ function sourceText(row) {
 }
 
 function buildBriefPrompt(rows) {
-  const blocks = rows.slice(0, 60).map(function (row, idx) {
+  const blocks = rows.slice(0, 18).map(function (row, idx) {
     return [
       "[자료 " + (idx + 1) + "]",
       "분류: " + (row.project ? "프로젝트:" + row.project : (row.category || "")),
@@ -175,7 +175,7 @@ function buildBriefPrompt(rows) {
       "인물힌트: " + stripHtml(row.people || ""),
       "저장요약: " + stripHtml(row.summary || ""),
       "원문:",
-      sourceText(row).slice(0, 1400),
+      sourceText(row).slice(0, 500),
     ].join("\n");
   });
   return "오늘: " + todayText() + "\n\n" + blocks.join("\n\n---\n\n");
@@ -188,6 +188,15 @@ function cleanBriefOutput(text) {
     .trim();
   if (!out.includes("브리핑") || !out.includes("[보고 건]")) return "";
   return out;
+}
+
+function withTimeout(promise, ms, message) {
+  return Promise.race([
+    promise,
+    new Promise(function (_, reject) {
+      setTimeout(function () { reject(new Error(message || "timeout")); }, ms);
+    }),
+  ]);
 }
 
 async function sendLongMessage(env, chatId, text) {
@@ -230,7 +239,11 @@ export async function runBrief(env, chatId) {
 
   if (sourceRows.length) {
     try {
-      const composed = cleanBriefOutput(await callClaude(env, buildBriefPrompt(sourceRows), BRIEF_SYSTEM, MODEL_SMART, 2600));
+      const composed = cleanBriefOutput(await withTimeout(
+        callClaude(env, buildBriefPrompt(sourceRows), BRIEF_SYSTEM, MODEL_SMART, 2000),
+        25000,
+        "brief compose timeout"
+      ));
       if (composed) return sendLongMessage(env, chatId, composed);
     } catch (e) {
       console.error("compose brief error", e && e.message);
