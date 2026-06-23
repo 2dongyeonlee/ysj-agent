@@ -28,3 +28,4 @@ jobs:
             wrangler d1 execute ysj-db --remote --file=migrations/0010_add_file_sender.sql || true
             wrangler d1 execute ysj-db --remote --file=migrations/0011_fix_project_keywords.sql || true
             wrangler d1 execute ysj-db --remote --file=migrations/0012_reclass_insights.sql || true
+            wrangler d1 execute ysj-db --remote --file=migrations/0013_add_file_minutes.sql || true

@@ -5,7 +5,6 @@
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage, senderName } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
-import { extractInsight } from "./insight.js";
 import { saveFile } from "./db.js";
 import { buildR2Key } from "./collect.js";
 
@@ -104,6 +103,34 @@ const VOICE_SYSTEM = PERSONA_STYLE + "\n\n" +
   "━━━━━━━━━\n" +
   "<b>[참석]</b>\n• {화자/직책 — 참고용, 짧게}";
 
+const MEETING_JSON_SYSTEM = PERSONA_STYLE + "\n\n" +
+  "아래 받아쓰기 전문을 읽고 JSON만 반환하라. 마크다운 코드블록 금지.\n" +
+  "반환 스키마는 정확히 {\"short\":\"...\",\"full\":\"...\"} 이다.\n\n" +
+  "[short 규칙]\n" +
+  "- 텔레그램에 바로 보낼 짧은 회의록이다. '요약'이라는 단어를 쓰지 않는다.\n" +
+  "- 이모지, 마크다운 헤더, 표 금지. 구분선은 ━━━━━━━━━━━━━━━━━━ 만 사용.\n" +
+  "- 상단에 '결정·확정' 별도 섹션을 만들지 말고, 확정 결정은 각 안건의 '→ 결정:'에만 적는다.\n" +
+  "- [결정 필요]에는 사장님이 직접 판단할 항목만 쓴다. 없으면 '없음'.\n" +
+  "- [안건]은 번호 목록으로 쓰고, 각 안건은 반드시 '→ 결정:' 또는 '→ 미결:'로 닫는다.\n" +
+  "- [후속조치]에는 담당/기한 있는 액션만 쓴다. 없으면 '없음'.\n" +
+  "- 아래 형식을 지켜라.\n\n" +
+  "[회의 제목 또는 배경 한 줄]\n" +
+  "━━━━━━━━━━━━━━━━━━\n" +
+  "[결정 필요]\n" +
+  "- 사장님이 직접 판단할 항목만\n\n" +
+  "[안건]\n" +
+  "1. 안건명 — 핵심 내용 일부\n" +
+  "   → 결정: 확정된 것 또는 → 미결: 남은 것\n\n" +
+  "[후속조치]\n" +
+  "- 담당/기한 있는 액션만\n" +
+  "━━━━━━━━━━━━━━━━━━\n" +
+  "전체 회의록 필요 시 /minutes\n\n" +
+  "[full 규칙]\n" +
+  "- 상세 회의록이다. HTML parse_mode 기준으로 <b>, <u>만 사용 가능하다.\n" +
+  "- 이모지와 마크다운 **, ##, 표는 쓰지 않는다.\n" +
+  "- 안건별 흐름, 쟁점, 결정/미결, 후속조치, 참석/화자를 충실히 복원한다.\n" +
+  "- 받아쓰기에 없는 내용은 지어내지 말고 불명확하다고 쓴다.";
+
 // 녹음 메시지에서 오디오 객체 추출 (mime 또는 파일 확장자로 판별).
 export function pickAudio(msg) {
   if (msg.voice) return msg.voice;
@@ -149,7 +176,7 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
     // (file_id, chat_id) 기준 — 같은 녹음을 여러 방에 전달하면 file_id 가 같으므로
     // chat_id 까지 봐야 방마다 자기 행이 생긴다(전사를 올린 방으로 돌려보내기 위함).
     const upd = await env.DB.prepare(
-      "UPDATE files SET r2_key = ?, sender = ? WHERE file_id = ? AND chat_id = ?"
+      "UPDATE files SET r2_key = ?, sender = ?, doc_type = 'meeting' WHERE file_id = ? AND chat_id = ?"
     ).bind(r2Key, sender, voice.file_id, String(msg.chat.id)).run();
     if (!upd.meta || !upd.meta.changes) {
       await saveFile(env, {
@@ -159,6 +186,7 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
         filename,
         text: "",
         sender,
+        doc_type: "meeting",
       });
     }
   } catch (e) {
@@ -214,7 +242,7 @@ export async function runVoiceQueue(env) {
     const attKey = "vq:att:" + row.id;
     const att = parseInt((await env.STATE.get(attKey)) || "0", 10);
     if (att >= 2) {
-      await env.DB.prepare("UPDATE files SET text = ? WHERE id = ?").bind("[받아쓰기 실패]", row.id).run();
+      await env.DB.prepare("UPDATE files SET text = ?, doc_type = 'meeting' WHERE id = ?").bind("[받아쓰기 실패]", row.id).run();
       await sendMessage(env, chatId, "받아쓰기에 반복 실패했습니다. 녹음이 너무 길거나 음질/형식 문제일 수 있어요. 10분 이내로 나눠 다시 보내주세요. (원본은 저장돼 있습니다)");
       return;
     }
@@ -225,7 +253,7 @@ export async function runVoiceQueue(env) {
     try {
       const obj = await env.R2.get(row.r2_key);
       if (!obj) {
-        await env.DB.prepare("UPDATE files SET text = ? WHERE id = ?").bind("[받아쓰기 실패: 원본 없음]", row.id).run();
+        await env.DB.prepare("UPDATE files SET text = ?, doc_type = 'meeting' WHERE id = ?").bind("[받아쓰기 실패: 원본 없음]", row.id).run();
         return;
       }
       audioBuf = await obj.arrayBuffer();
@@ -245,37 +273,109 @@ export async function runVoiceQueue(env) {
     }
     if (!transcript) return;
 
-    // 전사 저장.
+    let minutes = { short: "", full: null };
     try {
-      await env.DB.prepare("UPDATE files SET text = ? WHERE id = ?")
-        .bind(transcript.slice(0, 16000), row.id).run();
+      minutes = await createMeetingMinutes(env, transcript);
+    } catch (e) {
+      console.error("createMeetingMinutes error", row.id, e && e.message);
+      minutes = { short: fallbackShortMinutes(transcript), full: null };
+    }
+
+    try {
+      await env.DB.prepare("UPDATE files SET text = ?, doc_type = 'meeting', full_minutes = ? WHERE id = ?")
+        .bind(transcript.slice(0, 16000), minutes.full || null, row.id).run();
     } catch (e) { console.error("voice queue save error", row.id, e && e.message); }
 
-    // 분류(insight) — 실패해도 전사는 이미 저장됨.
     try {
-      await extractInsight(env, {
-        chatId, sourceType: "voice", sourceRef: row.file_id, text: transcript,
-        sender: row.sender || "", senderId: "", caption: "", filename: row.filename, receivedAt: new Date(),
+      await saveMeetingInsight(env, {
+        chatId,
+        sourceRef: row.file_id,
+        summary: minutes.short,
+        sender: row.sender || "",
+        inputChars: transcript.length,
       });
-    } catch (e) { console.error("voice queue extractInsight error", row.id, e && e.message); }
+    } catch (e) { console.error("voice queue saveMeetingInsight error", row.id, e && e.message); }
 
-    // 전사 전송 + 회의록 안내.
-    const head = transcript.slice(0, 3500);
-    await sendMessage(env, chatId,
-      "🎙 받아쓰기 완료 (전문은 저장됨):\n\n" + head +
-      (transcript.length > 3500 ? "\n\n…(이하 생략)" : "") +
-      "\n\n📝 회의록이 필요하면 '회의록' 또는 /minutes 라고 보내주세요.");
+    await sendMessage(env, chatId, minutes.short || fallbackShortMinutes(transcript));
   } finally {
     await env.STATE.delete("vq:lock");
   }
 }
 
-// 저장된 최근 녹음 전사 조회.
-async function latestTranscript(env, chatId) {
+function parseJsonObject(raw) {
+  const cleaned = String(raw || "").replace(/```json|```/g, "").trim();
+  try { return JSON.parse(cleaned); } catch {}
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start !== -1 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
+  throw new Error("meeting JSON parse failed");
+}
+
+function fallbackShortMinutes(transcript) {
+  const first = String(transcript || "").replace(/\s+/g, " ").trim().slice(0, 240);
+  return [
+    "회의 내용 확인",
+    "━━━━━━━━━━━━━━━━━━",
+    "[결정 필요]",
+    "- 없음",
+    "",
+    "[안건]",
+    "1. 회의 내용 — " + (first || "전사 내용 확인 필요"),
+    "   → 미결: 상세 회의록 생성 필요",
+    "",
+    "[후속조치]",
+    "- 없음",
+    "━━━━━━━━━━━━━━━━━━",
+    "전체 회의록 필요 시 /minutes",
+  ].join("\n");
+}
+
+async function createMeetingMinutes(env, transcript) {
+  const raw = await callClaude(env,
+    "받아쓰기 전문:\n" + String(transcript || "").slice(0, 16000),
+    MEETING_JSON_SYSTEM,
+    MODEL_SMART,
+    4200
+  );
+  let parsed;
+  try {
+    parsed = parseJsonObject(raw);
+  } catch (e) {
+    console.error("meeting minutes JSON parse error", e && e.message);
+    return { short: String(raw || "").slice(0, 1200).trim() || fallbackShortMinutes(transcript), full: null };
+  }
+  const short = String(parsed.short || "").trim() || fallbackShortMinutes(transcript);
+  const full = String(parsed.full || "").trim() || null;
+  return { short, full };
+}
+
+async function saveMeetingInsight(env, row) {
+  await env.DB.prepare(
+    "INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, sender, input_chars, read_chars) " +
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(
+    String(row.chatId),
+    "voice",
+    row.sourceRef || "",
+    "",
+    "",
+    "",
+    String(row.summary || "").replace(/<\/?[a-zA-Z]+>/g, "").slice(0, 500),
+    "",
+    row.sender || "",
+    row.inputChars || 0,
+    Math.min(row.inputChars || 0, 16000)
+  ).run();
+}
+
+// 저장된 최근 meeting 자료 조회.
+async function latestMeeting(env, chatId) {
   try {
     return await env.DB.prepare(
-      "SELECT filename, text FROM files WHERE chat_id = ? AND text != '' AND text NOT LIKE '[받아쓰기 실패%' " +
-      "AND (filename LIKE '%.m4a' OR filename LIKE '%.ogg' OR filename LIKE '%.oga' " +
+      "SELECT id, filename, text, full_minutes, " +
+      "(SELECT summary FROM insights i WHERE i.source_type = 'voice' AND i.source_ref = files.file_id ORDER BY id DESC LIMIT 1) AS summary " +
+      "FROM files WHERE chat_id = ? AND text != '' AND text NOT LIKE '[받아쓰기 실패%' " +
+      "AND (doc_type = 'meeting' OR filename LIKE '%.m4a' OR filename LIKE '%.ogg' OR filename LIKE '%.oga' " +
       "OR filename LIKE '%.mp3' OR filename LIKE '%.wav' OR filename LIKE '%voice%' OR filename LIKE '%녹음%') " +
       "ORDER BY id DESC LIMIT 1"
     ).bind(String(chatId)).first();
@@ -286,25 +386,29 @@ async function latestTranscript(env, chatId) {
 // 즉시 안내한다. 실제 회의록 생성(LLM)은 매분 Cron(generateMinutes)이 처리한다.
 // (긴 전사의 회의록 생성도 웹훅 백그라운드 한도를 넘겨 멈추므로 Cron으로 분리.)
 export async function makeMinutesFromStored(env, chatId) {
-  const row = await latestTranscript(env, chatId);
+  const row = await latestMeeting(env, chatId);
   if (!row || !row.text) {
     return sendMessage(env, chatId, "최근 받아쓰기를 찾지 못했습니다. 녹음을 먼저 보내주세요.");
   }
-  await env.STATE.put("mj:" + chatId, String(Date.now()), { expirationTtl: 3600 });
-  return sendMessage(env, chatId, "📝 회의록을 작성하는 중입니다... 1~2분 내 도착합니다.");
+  if (row.full_minutes) return sendMessage(env, chatId, row.full_minutes);
+  return sendMessage(env, chatId,
+    "상세본 없음(구버전)\n\n" +
+    (row.summary || row.text.slice(0, 1200))
+  );
 }
 
 // Cron 이 호출 — 저장된 전사로 회의록을 생성해 전송.
 export async function generateMinutes(env, chatId) {
-  const row = await latestTranscript(env, chatId);
+  const row = await latestMeeting(env, chatId);
   if (!row || !row.text) {
     return sendMessage(env, chatId, "최근 받아쓰기를 찾지 못했습니다. 녹음을 먼저 보내주세요.");
   }
   try {
-    const minutes = await callClaude(env,
-      "아래는 회의/간담회 받아쓰기 전문이다. 위 형식에 따라 충실한 회의록을 작성하라.\n\n" + String(row.text).slice(0, 16000),
-      VOICE_SYSTEM, MODEL_SMART, 3500);
-    await sendMessage(env, chatId, minutes);
+    if (row.full_minutes) return sendMessage(env, chatId, row.full_minutes);
+    const minutes = await createMeetingMinutes(env, row.text);
+    await env.DB.prepare("UPDATE files SET doc_type = 'meeting', full_minutes = ? WHERE id = ?")
+      .bind(minutes.full || null, row.id).run();
+    await sendMessage(env, chatId, minutes.full || minutes.short);
   } catch (e) {
     console.error("generateMinutes error", e && (e.stack || e.message));
     await sendMessage(env, chatId, "회의록 작성에 실패했습니다. 잠시 후 다시 '회의록'이라고 보내주세요.");

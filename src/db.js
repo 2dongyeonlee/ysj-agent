@@ -39,8 +39,17 @@ export async function searchMessages(env, keyword) {
 // ===== 파일 (기능2: 자료 전달) =====
 export async function saveFile(env, f) {
   await env.DB.prepare(
-    `INSERT INTO files (chat_id, file_id, r2_key, filename, text, sender) VALUES (?, ?, ?, ?, ?, ?)`
-  ).bind(String(f.chat_id), f.file_id || "", f.r2_key || "", f.filename || "", f.text || "", f.sender || "").run();
+    `INSERT INTO files (chat_id, file_id, r2_key, filename, text, sender, doc_type, full_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    String(f.chat_id),
+    f.file_id || "",
+    f.r2_key || "",
+    f.filename || "",
+    f.text || "",
+    f.sender || "",
+    f.doc_type || "",
+    f.full_minutes || null
+  ).run();
 }
 
 // 같은 녹음/파일을 이미 처리해 전사문(text)을 저장해 뒀는지 file_id 로 조회.
