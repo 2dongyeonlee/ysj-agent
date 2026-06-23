@@ -17,28 +17,57 @@ function cleanForHtml(text) {
   return t.trim();
 }
 
-export async function sendMessage(env, chatId, text) {
-  const clean = cleanForHtml(text);
+// 텔레그램 한 메시지 한계는 4096자. 여유를 두고 이 크기로 쪼갠다.
+const TG_CHUNK = 3900;
+
+// 긴 텍스트를 줄 경계 기준으로 한도 이하 조각들로 나눈다. 아주 긴 한 줄은 강제로 자른다.
+function splitChunks(text, limit) {
+  const out = [];
+  let buf = "";
+  for (const line of String(text).split("\n")) {
+    if (line.length > limit) {
+      if (buf) { out.push(buf); buf = ""; }
+      for (let i = 0; i < line.length; i += limit) out.push(line.slice(i, i + limit));
+      continue;
+    }
+    const next = buf ? buf + "\n" + line : line;
+    if (next.length > limit) { out.push(buf); buf = line; }
+    else { buf = next; }
+  }
+  if (buf) out.push(buf);
+  return out.length ? out : [""];
+}
+
+// 한 조각 전송(HTML 우선, 파싱 실패 시 평문 폴백).
+async function sendOne(env, chatId, text) {
   const res = await fetch(`${apiBase(env)}/sendMessage`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text: clean.slice(0, 3900),
-      parse_mode: "HTML",
-    }),
+    body: JSON.stringify({ chat_id: chatId, text: text.slice(0, 4096), parse_mode: "HTML" }),
   });
   if (!res.ok) {
-    // HTML parse failed -> retry as plain text (strip tags too)
+    // HTML parse 실패(조각 경계가 태그를 끊은 경우 등) → 평문으로 재전송.
     console.error("sendMessage fail", await res.text());
-    const plain = clean.replace(/<\/?[a-zA-Z]+>/g, "");
-    await fetch(`${apiBase(env)}/sendMessage`, {
+    const plain = text.replace(/<\/?[a-zA-Z]+>/g, "");
+    const retry = await fetch(`${apiBase(env)}/sendMessage`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text: plain.slice(0, 3900) }),
+      body: JSON.stringify({ chat_id: chatId, text: plain.slice(0, 4096) }),
     });
+    return retry.json().catch(() => ({}));
   }
   return res.json().catch(() => ({}));
+}
+
+export async function sendMessage(env, chatId, text) {
+  const clean = cleanForHtml(text);
+  if (clean.length <= TG_CHUNK) return sendOne(env, chatId, clean);
+  // 길면 잘라내지 말고 여러 메시지로 나눠 보낸다(회의록 등 전체 보존).
+  let last = {};
+  for (const chunk of splitChunks(clean, TG_CHUNK)) {
+    last = await sendOne(env, chatId, chunk);
+  }
+  return last;
 }
 
 export async function sendDocument(env, chatId, fileId, caption = "") {
