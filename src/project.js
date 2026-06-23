@@ -136,7 +136,7 @@ function projectOneLine(text, limit) {
 }
 
 function formatItem(tag, row, brief) {
-  const limit = brief ? 100 : 140;
+  const limit = brief ? 160 : 220;
   return "  " + tag + " [" + issueDate(row) + "] " + projectOneLine(row.summary, limit);
 }
 

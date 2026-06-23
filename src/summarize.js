@@ -31,21 +31,23 @@ const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" + `문서를 읽고 JSON만 반�
   "summary_html": "사장이 30초 안에 파악하는 보고용 1줄 요약. 반드시 마침표로 끝나는 완결된 한 문장으로 쓰고 문장을 중간에 끊지 말 것. 본문의 구체값(금액·숫자·대상·일시·장소·참석자·기관명)을 포함해 '무엇을·누가·얼마·언제'가 드러나게. 80자 내외로 핵심만 담되 완결을 우선한다. 막연한 표현('지원 내용 발표','과제 보고') 금지. 인사말('사장님' 등)·머리표·번호('1.','Ⅱ.')·불릿·이모지·제목 형식 금지. 본문에 구체 내용이 없으면 '(내용 확인 필요)'."
 }`;
 
-const SUMMARY_SYSTEM = PERSONA_STYLE + "\n\n" + `당신은 염성진 사장 전담 비서다. 문서를 "요약"하지 말고 아래 칸을 채워라.
-규칙:
-- 칸에 해당하는 내용만 쓴다. 양식 밖 줄글 나열 금지.
-- 각 칸은 1줄. 길면 자른다.
-- 모르는 칸은 "—"로 둔다. 지어내지 않는다.
-- "확정"과 "검토중/토의용"을 구분하라. 명시 없으면 "검토중".
-- 날짜·인명·금액은 <b>굵게</b>.
+const SUMMARY_SYSTEM = PERSONA_STYLE + "\n\n" + `당신은 염성진 사장 보고 비서다. 아래 양식만 채워라. 이모지·마크다운 금지, HTML <b>만. 줄글 나열 금지, 불릿로 끊어 쓴다. 자료에 없는 항목은 '없음'/'미상', 지어내지 말 것.
 
-[출력 양식]
-■ <b>제목</b> {제목}
-■ <b>일정</b> {날짜} · {프로젝트}
-■ <b>주요 내용</b> {이 문서가 말하는 단 하나, 1줄}
-■ <b>규모</b> {핵심 숫자 2~3개, 없으면 —}
-■ <b>Action Item</b> {사장이 결정할 것, 없으면 "현 단계 없음"}
-■ <b>상태</b> {확정 / 검토중 / 토의용 중 하나}`;
+■ <b>배경</b>
+맥락 1줄
+
+■ <b>주요 내용</b>
+- 핵심 (구체값·숫자 포함)
+- 핵심
+
+■ <b>Action Item</b>
+- 담당/기한 액션, 없으면 '없음'
+
+■ <b>일정</b>
+- 명시된 날짜·마감, 없으면 '없음'
+
+■ <b>참석/관계자</b>
+- 인물·소속, 없으면 '미상'`;
 
 function isMeetingMemoFile(msg, text) {
   const filename = (msg.document && msg.document.file_name) || "";
@@ -246,10 +248,11 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false, optio
 
   if (!replyToUser) return;
 
-  const out = (parsed && parsed.summary_html)
-    ? parsed.summary_html
-    : ("📄 <b>요약</b>\n\n🎯 핵심\n• " + text.slice(0, 300));
-  await sendMessage(env, chatId, out);
+  let out = await callClaude(env, "문서 내용:\n" + text.slice(0, 9000), SUMMARY_SYSTEM, MODEL_SMART, 2000);
+  if (/참석\/관계자[\s\S]*?(미상|없음)/.test(out || "")) {
+    out += "\n\n날짜·참석 명단·주요 아젠다를 알려주시면 반영해 다시 작성해 드립니다.";
+  }
+  await sendMessage(env, chatId, out || "요약 생성 실패. 다시 시도해주세요.");
 }
 
 export async function summarizeLatest(env, chatId, keyword) {

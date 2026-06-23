@@ -47,22 +47,22 @@ const INFO_SYSTEM = `당신은 염성진 사장에게 대외정보를 보고하�
 대외정보 · {오늘}
 ━━━━━━━━━
 
-☑ <b>정부</b>
+■ <b>정부</b>
 • [M/D] {안건 1줄}
 
-☑ <b>BH</b>
+■ <b>BH</b>
 • [M/D] {안건 1줄}
 
-☑ <b>국회</b>
+■ <b>국회</b>
 • [M/D] {안건 1줄}
 
-☑ <b>언론</b>
+■ <b>언론</b>
 • [M/D] {안건 1줄}
 
-☑ <b>글로벌</b>
+■ <b>글로벌</b>
 • [M/D] {안건 1줄}
 
-☑ <b>경쟁사</b>
+■ <b>경쟁사</b>
 • [M/D] {안건 1줄}
 
 ━━━━━━━━━
@@ -170,8 +170,8 @@ function cleanInfoOutput(text) {
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/📊\s*/g, "")
     .replace(/ℹ️\s*/g, "")
-    .replace(/^[ \t]*(?:🏢|🇰🇷|🌐|🏛|🗞)\s*<b>([^<]+)<\/b>/gm, "☑ <b>$1</b>")
-    .replace(/^[ \t]*(?:☑|\[)?\s*<b>\[?(정부|BH|국회|언론|글로벌|경쟁사)\]?<\/b>\]?/gm, "☑ <b>$1</b>")
+    .replace(/^[ \t]*(?:🏢|🇰🇷|🌐|🏛|🗞)\s*<b>([^<]+)<\/b>/gm, "■ <b>$1</b>")
+    .replace(/^[ \t]*(?:☑|■|\[)?\s*<b>\[?(정부|BH|국회|언론|글로벌|경쟁사)\]?<\/b>\]?/gm, "■ <b>$1</b>")
     .replace(/프로젝트\s*\/project\s*·\s*핵심\s*\/brief/g, "프로젝트 /project · 핵심 /brief")
     .trim();
 }
@@ -225,7 +225,7 @@ export async function runInfoBriefing(env, chatId, days) {
   for (const cat of INFO_CATEGORIES) {
     const grouped = visibleItems.filter(function (r) { return r.category === cat.name; });
     if (!grouped.length) continue;
-    lines.push("☑ <b>" + cat.name + "</b>");
+    lines.push("■ <b>" + cat.name + "</b>");
     for (const row of grouped) {
       lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary));
     }

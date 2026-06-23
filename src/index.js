@@ -13,6 +13,7 @@ import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtask
 import { resummarizeText } from "./insight.js";
 import { splitBriefingSections } from "./collect.js";
 import { runReclass } from "./reclass.js";
+import { extractText } from "./docparse.js";
 
 // 권한자 인식. (1) chat_id 기반: ADMIN_CHAT_ID 또는 BRIEFING_TARGET_ID 채팅 — @username
 // 미설정 단말에서도 동작(권장). (2) ADMIN_USERNAMES @username 기반(보조).
@@ -20,6 +21,8 @@ const ALLOWED_ADMINS = ["CHANGE_ME"];
 // 대시보드 변수 설정이 막힐 때를 위한 코드 내 관리자 chat_id (예: ["123456789"]).
 // /whoami 로 확인한 본인 chat_id 를 넣으면 대시보드 없이 관리자 권한이 적용된다.
 const ADMIN_CHAT_IDS = ["5965410906", "624410079"];
+
+const CUSTOM_DOC_SYSTEM = "자료를 사용자 요청 형식대로 보고용 정리. 형식 미지정시 ■ 배경/주요내용/Action/일정/참석 양식. 이모지·마크다운 금지, <b>만. 없는내용 창작금지.";
 
 function csv(value) {
   return String(value || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
@@ -29,6 +32,18 @@ function adminUsernames(env) {
   const fromEnv = csv((env && env.ADMIN_USERNAMES) || "").map(function (s) { return s.replace(/^@/, "").toLowerCase(); });
   const fromCode = ALLOWED_ADMINS.map(function (s) { return String(s).trim().replace(/^@/, "").toLowerCase(); }).filter(Boolean);
   return fromEnv.concat(fromCode);
+}
+
+async function customSummarizeDoc(env, chatId, docMsg, instruction) {
+  const body = await extractText(env, docMsg);
+  if (!body || String(body).trim().length < 20) {
+    return sendMessage(env, chatId, "문서 본문을 읽지 못했습니다. 텍스트 선택 가능한 PDF, .docx, 또는 .txt로 다시 보내주세요.");
+  }
+  const prompt =
+    "사용자 요청:\n" + String(instruction || "").trim() +
+    "\n\n자료 본문:\n" + String(body || "").slice(0, 9000);
+  const out = await callClaude(env, prompt, CUSTOM_DOC_SYSTEM, MODEL_SMART, 2000);
+  return sendMessage(env, chatId, out || "문서 정리에 실패했습니다. 다시 시도해주세요.");
 }
 
 function adminChatIds(env) {
@@ -494,6 +509,10 @@ async function route(env, msg) {
   // reply 대상이 녹음이고, 사용자가 회의록/정리/요약을 요청하면 → 그 녹음 회의록 작성.
   if (repliedAudio && /회의록|녹취|받아쓰기|정리|요약|summary/i.test(text)) {
     return handleVoice(env, chatId, msg.reply_to_message, true);
+  }
+  if (isDocumentMsg(msg.reply_to_message) && text && text.length >= 2 && !text.startsWith("/")) {
+    const inst = text.split("@" + botUsername).join("").trim();
+    return customSummarizeDoc(env, chatId, msg.reply_to_message, inst);
   }
 
   // text: groups need mention; 1:1 uses natural-language intent classification.
