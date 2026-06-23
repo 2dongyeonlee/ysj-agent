@@ -176,7 +176,7 @@ const VOICE_AUDIO_LIKE =
 // 긴 녹음도 처리 가능. 동시 실행은 KV 락으로 막고, 반복 실패는 시도 횟수로 끊는다.
 export async function runVoiceQueue(env) {
   if (await env.STATE.get("vq:lock")) return; // 이미 처리 중
-  await env.STATE.put("vq:lock", "1", { expirationTtl: 170 });
+  await env.STATE.put("vq:lock", "1", { expirationTtl: 300 });
   try {
     // 1) 회의록 작성 대기 작업 우선 처리(사용자가 기다리는 중). 한 번에 1건.
     const mj = await env.STATE.list({ prefix: "mj:" });
@@ -202,7 +202,7 @@ export async function runVoiceQueue(env) {
     }
     if (!row) return;
     const chatId = row.chat_id;
-    await env.STATE.put("vq:cool:" + row.id, "1", { expirationTtl: 240 }); // 4분 쿨다운
+    await env.STATE.put("vq:cool:" + row.id, "1", { expirationTtl: 360 }); // 6분 쿨다운
 
     // 반복 실패 차단 — 2회 시도 후 sentinel 저장하고 안내(더는 대기 대상이 아님).
     const attKey = "vq:att:" + row.id;
@@ -231,7 +231,7 @@ export async function runVoiceQueue(env) {
     // STT — Cron 이라 넉넉한 타임아웃 사용.
     let transcript = "";
     try {
-      const tr = await transcribe(env, audioBuf, row.filename, 150000);
+      const tr = await transcribe(env, audioBuf, row.filename, 280000); // Cron은 시간 여유 큼 → 긴 녹음 대비
       transcript = (tr.plain || "").trim();
     } catch (e) {
       console.error("voice queue STT error", row.id, e && e.message);
