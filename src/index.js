@@ -423,12 +423,21 @@ async function route(env, msg) {
     }
     return runProjectBriefing(env, chatId, days, name);
   }
+  async function summarizeDocumentRequest(targetMsg) {
+    await sendMessage(env, chatId, "문서를 읽고 회의록/요약을 작성하는 중입니다. 잠시만 기다려주세요.");
+    try {
+      return await summarizeFile(env, chatId, targetMsg, true);
+    } catch (e) {
+      console.error("summarizeDocumentRequest error", e && (e.stack || e.message));
+      return sendMessage(env, chatId, "문서 처리 중 오류가 발생했습니다. PDF가 스캔본/암호화 파일이면 텍스트 선택 가능한 PDF, .docx, 또는 .txt로 다시 보내주세요.");
+    }
+  }
   if (text.startsWith("/summary")) {
     // 녹음이 함께 왔거나 reply 대상이 녹음이면 → 회의록 작성(handleVoice)으로.
     if (isAudioMsg(msg)) { await collectMessage(env, msg); return handleVoice(env, chatId, msg, true); }
     if (isAudioMsg(msg.reply_to_message)) return handleVoice(env, chatId, msg.reply_to_message, true);
-    if (isDocumentMsg(msg)) { await collectMessage(env, msg); return summarizeFile(env, chatId, msg, true); }
-    if (isDocumentMsg(msg.reply_to_message)) return summarizeFile(env, chatId, msg.reply_to_message, true);
+    if (isDocumentMsg(msg)) { await collectMessage(env, msg); return summarizeDocumentRequest(msg); }
+    if (isDocumentMsg(msg.reply_to_message)) return summarizeDocumentRequest(msg.reply_to_message);
     const kw = text.replace("/summary", "").trim();
     return summarizeLatest(env, chatId, kw);
   }
@@ -436,7 +445,8 @@ async function route(env, msg) {
   // 아니면 저장된 최근 전사를 불러 요약한다. (한 요청에 STT+요약을 붙이지 않음)
   if (text.startsWith("/minutes") || /회의록|녹취록|녹취|받아쓰기/.test(text)) {
     if (isAudioMsg(msg.reply_to_message)) return handleVoice(env, chatId, msg.reply_to_message, true);
-    if (isDocumentMsg(msg.reply_to_message)) return summarizeFile(env, chatId, msg.reply_to_message, true);
+    if (isDocumentMsg(msg)) { await collectMessage(env, msg); return summarizeDocumentRequest(msg); }
+    if (isDocumentMsg(msg.reply_to_message)) return summarizeDocumentRequest(msg.reply_to_message);
     return makeMinutesFromStored(env, chatId);
   }
   if (text.startsWith("/q ") || text === "/q") {
