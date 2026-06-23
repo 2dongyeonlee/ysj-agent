@@ -429,7 +429,7 @@ async function route(env, msg) {
   async function summarizeDocumentRequest(targetMsg, forceMeeting = false) {
     await sendMessage(env, chatId, "문서를 읽고 회의록/요약을 작성하는 중입니다. 잠시만 기다려주세요.");
     try {
-      await enqueueDocumentSummary(env, chatId, targetMsg, { forceMeeting });
+      await enqueueDocumentSummary(env, chatId, targetMsg, { asMeeting: forceMeeting });
     } catch (e) {
       console.error("summarizeDocumentRequest error", e && (e.stack || e.message));
       return sendMessage(env, chatId, "문서 처리 중 오류가 발생했습니다. PDF가 스캔본/암호화 파일이면 텍스트 선택 가능한 PDF, .docx, 또는 .txt로 다시 보내주세요.");

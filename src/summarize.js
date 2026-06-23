@@ -107,7 +107,8 @@ async function saveMeetingDocument(env, msg, text, minutes) {
 
 export async function enqueueDocumentSummary(env, chatId, msg, options = {}) {
   const key = "ds:" + String(chatId) + ":" + String(msg.message_id || Date.now());
-  await env.STATE.put(key, JSON.stringify({ chatId: String(chatId), msg, forceMeeting: !!options.forceMeeting }), { expirationTtl: 1800 });
+  const asMeeting = !!(options.asMeeting || options.forceMeeting);
+  await env.STATE.put(key, JSON.stringify({ chatId: String(chatId), msg, asMeeting, forceMeeting: asMeeting }), { expirationTtl: 1800 });
 }
 
 export async function runDocumentSummaryQueue(env) {
@@ -128,7 +129,7 @@ export async function runDocumentSummaryQueue(env) {
     return;
   }
   try {
-    await summarizeFile(env, job.chatId, job.msg, true, { forceMeeting: !!job.forceMeeting });
+    await summarizeFile(env, job.chatId, job.msg, true, { asMeeting: !!(job.asMeeting || job.forceMeeting) });
   } catch (e) {
     console.error("document summary queue error", e && (e.stack || e.message));
     await sendMessage(env, job.chatId, "문서 처리 중 오류가 발생했습니다. PDF가 스캔본/암호화 파일이면 텍스트 선택 가능한 PDF, .docx, 또는 .txt로 다시 보내주세요.");
@@ -167,7 +168,7 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false, optio
     console.error("files text update error", e && e.message);
   }
 
-  if (options.forceMeeting || isMeetingMemoFile(msg, text)) {
+  if (options.asMeeting || options.forceMeeting || isMeetingMemoFile(msg, text)) {
     let minutes = null;
     try {
       minutes = await createMeetingMinutes(env, text);

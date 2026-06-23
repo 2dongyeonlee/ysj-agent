@@ -114,7 +114,10 @@ const MEETING_JSON_SYSTEM = PERSONA_STYLE + "\n\n" +
   "- [안건]은 번호 목록으로 쓰고, 각 안건은 반드시 '→ 결정:' 또는 '→ 미결:'로 닫는다.\n" +
   "- [후속조치]에는 담당/기한 있는 액션만 쓴다. 없으면 '없음'.\n" +
   "- 아래 형식을 지켜라.\n\n" +
-  "[회의 제목 또는 배경 한 줄]\n" +
+  "[회의 제목]\n" +
+  "[일시] 자료에 명시된 날짜·시간. 없으면 '미상'\n" +
+  "[참석] 자료에 등장하는 참석자·발화자·소속. 없으면 '미상'\n" +
+  "[배경] 이 회의/문서가 다루는 맥락 1줄\n" +
   "━━━━━━━━━━━━━━━━━━\n" +
   "[결정 필요]\n" +
   "- 사장님이 직접 판단할 항목만\n\n" +
@@ -398,7 +401,8 @@ async function latestMeeting(env, chatId) {
       "(SELECT summary FROM insights i WHERE i.source_type = 'voice' AND i.source_ref = files.file_id ORDER BY id DESC LIMIT 1) AS summary " +
       "FROM files WHERE chat_id = ? AND text != '' AND text NOT LIKE '[받아쓰기 실패%' " +
       "AND (doc_type = 'meeting' OR filename LIKE '%.m4a' OR filename LIKE '%.ogg' OR filename LIKE '%.oga' " +
-      "OR filename LIKE '%.mp3' OR filename LIKE '%.wav' OR filename LIKE '%voice%' OR filename LIKE '%녹음%') " +
+      "OR filename LIKE '%.mp3' OR filename LIKE '%.wav' OR filename LIKE '%voice%' OR filename LIKE '%녹음%' " +
+      "OR filename LIKE '%.txt' OR filename LIKE '%.docx' OR filename LIKE '%.doc' OR filename LIKE '%.pdf') " +
       "ORDER BY id DESC LIMIT 1"
     ).bind(String(chatId)).first();
   } catch (e) { console.error("minutes query error", e && e.message); return null; }
