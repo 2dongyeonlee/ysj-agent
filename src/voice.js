@@ -413,9 +413,10 @@ export async function makeMinutesFromStored(env, chatId) {
     return sendMessage(env, chatId, "최근 받아쓰기를 찾지 못했습니다. 녹음을 먼저 보내주세요.");
   }
   if (row.full_minutes) return sendMessage(env, chatId, row.full_minutes);
+  // 상세본이 없으면 생성 작업을 큐에 넣는다. 다음 분 Cron(runVoiceQueue→generateMinutes)이 처리.
+  await env.STATE.put("mj:" + chatId, "1", { expirationTtl: 1800 });
   return sendMessage(env, chatId,
-    "상세본 없음(구버전)\n\n" +
-    (row.summary || row.text.slice(0, 1200))
+    "상세 회의록을 생성 중입니다. 1~2분 후 /minutes 를 다시 보내주세요."
   );
 }
 
