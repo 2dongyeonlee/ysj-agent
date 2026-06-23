@@ -146,6 +146,32 @@ async function route(env, msg) {
         "<code>ADMIN_CHAT_ID = " + chatId + "</code>\n추가 후 저장하세요(재배포 불필요)."));
   }
 
+  // 녹음 큐 진단 (권한자만): 최근 오디오 행의 방(chat_id)·전사 상태·R2 여부를 그대로 보여준다.
+  if (text === "/vq") {
+    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다.");
+    const { results } = await env.DB.prepare(
+      "SELECT id, chat_id, filename, sender, r2_key, " +
+      "CASE WHEN text IS NULL OR text = '' THEN '대기' WHEN text LIKE '[받아쓰기 실패%' THEN '실패' ELSE ('완료(' || length(text) || '자)') END AS st, " +
+      "created_at FROM files " +
+      "WHERE (filename LIKE '%.m4a' OR filename LIKE '%.ogg' OR filename LIKE '%.oga' OR filename LIKE '%.mp3' " +
+      "OR filename LIKE '%.wav' OR filename LIKE '%.aac' OR filename LIKE '%.opus' OR filename LIKE '%.amr' " +
+      "OR filename LIKE '%.flac' OR filename LIKE '%voice%' OR filename LIKE '%녹음%') " +
+      "ORDER BY id DESC LIMIT 12"
+    ).all();
+    if (!results || !results.length) return sendMessage(env, chatId, "최근 오디오 행이 없습니다.");
+    const lines = results.map(function (r) {
+      return "#" + r.id + " · " + r.st + " · " + (r.r2_key ? "R2✓" : "R2✗") +
+        "\n   방:" + r.chat_id + " · " + (r.filename || "") + " · " + (r.sender || "") +
+        "\n   " + r.created_at;
+    });
+    const lock = await env.STATE.get("vq:lock");
+    const mj = await env.STATE.list({ prefix: "mj:" });
+    return sendMessage(env, chatId,
+      "🩺 <b>녹음 큐 상태</b> (이 방 id: <code>" + chatId + "</code>)\n" +
+      "락:" + (lock ? "처리중" : "없음") + " · 회의록대기:" + ((mj.keys || []).length) + "건\n\n" +
+      lines.join("\n"));
+  }
+
   // 기존 파일 일괄 이관 (권한자만): r2_key 빈 행을 R2 로 옮긴다.
   if (text === "/migrate") {
     if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다. /whoami 로 chat_id 확인 후 ADMIN_CHAT_ID 에 등록하세요.");
