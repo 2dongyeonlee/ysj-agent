@@ -154,6 +154,57 @@ async function extractDocx(url) {
   return "[docx text not found]";
 }
 
+// PPTX(ZIP) 슬라이드 텍스트 추출 — extractDocx 의 ZIP 워크/inflateRaw 재사용.
+// ppt/slides/slideN.xml 만 모아 N 순으로 정렬, 각 슬라이드의 <a:t> 텍스트를 뽑는다.
+async function extractPptx(url) {
+  const res = await fetch(url);
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength > 16 * 1024 * 1024) return "[file too large]";
+  const bytes = new Uint8Array(buf);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 66000); i--) {
+    if (readU32(bytes, i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) return "[pptx parse failed]";
+  const centralOffset = readU32(bytes, eocd + 16);
+  const centralSize = readU32(bytes, eocd + 12);
+  const decoder = new TextDecoder("utf-8");
+  let pos = centralOffset;
+  const end = centralOffset + centralSize;
+  const slides = []; // { n, xml }
+  while (pos < end && readU32(bytes, pos) === 0x02014b50) {
+    const method = readU16(bytes, pos + 10);
+    const compSize = readU32(bytes, pos + 20);
+    const nameLen = readU16(bytes, pos + 28);
+    const extraLen = readU16(bytes, pos + 30);
+    const commentLen = readU16(bytes, pos + 32);
+    const localOffset = readU32(bytes, pos + 42);
+    const name = decoder.decode(bytes.slice(pos + 46, pos + 46 + nameLen));
+    const m = name.match(/^ppt\/slides\/slide(\d+)\.xml$/);
+    if (m) {
+      const localNameLen = readU16(bytes, localOffset + 26);
+      const localExtraLen = readU16(bytes, localOffset + 28);
+      const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+      const packed = bytes.slice(dataStart, dataStart + compSize);
+      const data = method === 0 ? packed : (method === 8 ? await inflateRaw(packed) : null);
+      if (data) slides.push({ n: parseInt(m[1], 10), xml: decoder.decode(data) });
+    }
+    pos += 46 + nameLen + extraLen + commentLen;
+  }
+  if (!slides.length) return "[pptx text not found]";
+  slides.sort(function (a, b) { return a.n - b.n; });
+  const out = slides.map(function (s) {
+    return (s.xml.match(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g) || [])
+      .map(function (t) {
+        return t.replace(/<[^>]+>/g, "")
+          .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+          .replace(/&quot;/g, "\"").replace(/&apos;/g, "'");
+      })
+      .join("\n");
+  }).join("\n\n").trim();
+  return out || "[pptx text not found]";
+}
+
 export async function extractText(env, msg) {
   try {
     if (msg.photo && msg.photo.length) {
@@ -176,10 +227,13 @@ export async function extractText(env, msg) {
       if (/\.docx$/i.test(name)) {
         return await extractDocx(url);
       }
+      if (/\.pptx$/i.test(name)) {
+        return await extractPptx(url);
+      }
       if (/\.doc$/i.test(name)) {
         return "[legacy Word .doc files are not supported. Please send .docx, .pdf, or .txt: " + name + "]";
       }
-      return "[only PDF, DOCX, TXT, and image files are supported: " + name + "]";
+      return "[only PDF, DOCX, PPTX, TXT, and image files are supported: " + name + "]";
     }
   } catch (e) {
     console.error("extractText error", e && e.message);
