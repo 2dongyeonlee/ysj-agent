@@ -196,6 +196,22 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
     console.error("voice enqueue save error", e && e.message);
   }
 
+  // 이미 전사된 녹음을 다시 보낸 경우(같은 file_id) → 재전사하지 않고 저장된 전사로
+  // '그 녹음'의 회의록을 바로 작성한다(tmin 큐에 해당 전사를 직접 실어 정확히 그 녹음으로).
+  let existingText = "";
+  try {
+    const ex = await env.DB.prepare(
+      "SELECT text FROM files WHERE file_id = ? AND chat_id = ? AND text != '' AND text NOT LIKE '[받아쓰기 실패%' ORDER BY id DESC LIMIT 1"
+    ).bind(voice.file_id, String(msg.chat.id)).first();
+    existingText = (ex && ex.text) || "";
+  } catch (e) { console.error("voice existing-text check error", e && e.message); }
+
+  if (existingText && existingText.length >= 20) {
+    await qPush(env, "tmin", { chatId: String(chatId), text: String(existingText).slice(0, 16000) });
+    if (replyToUser) await sendMessage(env, chatId, "🎙 이미 받아쓴 녹음입니다. 회의록을 작성 중입니다… 1~2분 후 도착합니다.");
+    return;
+  }
+
   if (replyToUser) {
     await sendMessage(env, chatId,
       "🎙 녹음을 받았습니다. 받아쓰는 중이며 1~2분 내 회의록이 자동으로 도착합니다. (긴 녹음일수록 조금 더 걸려요)\n" +
