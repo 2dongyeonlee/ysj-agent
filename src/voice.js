@@ -279,49 +279,17 @@ export async function runVoiceQueue(env) {
     }
     if (!transcript) return;
 
-    let minutes = { short: "", full: null };
+    // 전사만 저장하고 회의록 생성(LLM)은 다음 Cron 틱으로 분리한다.
+    // STT(긴 시간) + 회의록 LLM 을 한 실행에 붙이면 무료 플랜 실행시간을 넘겨
+    // 전사는 저장됐는데 회의록은 안 나가는 일이 생긴다. → STT 틱 / 회의록 틱 분리.
     try {
-      minutes = await createMeetingMinutes(env, transcript);
-    } catch (e) {
-      console.error("createMeetingMinutes error", row.id, e && e.message);
-      minutes = { short: fallbackShortMinutes(transcript), full: null };
-    }
-
-    try {
-      await env.DB.prepare("UPDATE files SET text = ?, doc_type = 'meeting', full_minutes = ? WHERE id = ?")
-        .bind(transcript.slice(0, 16000), minutes.full || null, row.id).run();
+      await env.DB.prepare("UPDATE files SET text = ?, doc_type = 'meeting' WHERE id = ?")
+        .bind(transcript.slice(0, 16000), row.id).run();
     } catch (e) { console.error("voice queue save error", row.id, e && e.message); }
 
-    if (!minutes.full) {
-      try {
-        const retry = await createMeetingMinutes(env, transcript);
-        minutes = {
-          short: retry.short || minutes.short || fallbackShortMinutes(transcript),
-          full: retry.full || retry.short || minutes.short || fallbackShortMinutes(transcript),
-        };
-        await env.DB.prepare("UPDATE files SET doc_type = 'meeting', full_minutes = ? WHERE id = ?")
-          .bind(minutes.full, row.id).run();
-      } catch (e) {
-        console.error("createMeetingMinutes retry error", row.id, e && e.message);
-        minutes.full = minutes.short || fallbackShortMinutes(transcript);
-        await env.DB.prepare("UPDATE files SET doc_type = 'meeting', full_minutes = ? WHERE id = ?")
-          .bind(minutes.full, row.id).run();
-      }
-    }
-
-    try {
-      await saveMeetingInsight(env, {
-        chatId,
-        sourceRef: row.file_id,
-        summary: minutes.short,
-        sender: row.sender || "",
-        inputChars: transcript.length,
-      });
-    } catch (e) { console.error("voice queue saveMeetingInsight error", row.id, e && e.message); }
-
+    await qPush(env, "mj", String(chatId), true); // 다음 틱(generateMinutes)이 회의록 생성·전송
     const targetChatId = minutesTargetChat(env, chatId);
-    const out = await withMetaFollowup(env, targetChatId, row.file_id, minutes.short || fallbackShortMinutes(transcript));
-    await sendMessage(env, targetChatId, out);
+    await sendMessage(env, targetChatId, "🎙 받아쓰기 완료. 회의록을 작성 중입니다… 잠시 후 도착합니다.");
   } finally {
     await env.STATE.delete("vq:lock");
   }
@@ -575,6 +543,9 @@ export async function generateMinutes(env, chatId) {
     const minutes = await createMeetingMinutes(env, row.text);
     await env.DB.prepare("UPDATE files SET doc_type = 'meeting', full_minutes = ? WHERE id = ?")
       .bind(minutes.full || null, row.id).run();
+    try {
+      await saveMeetingInsight(env, { chatId, sourceRef: row.file_id, summary: minutes.short, sender: row.sender || "", inputChars: String(row.text || "").length });
+    } catch (e) { console.error("generateMinutes saveMeetingInsight error", e && e.message); }
     const out = await withMetaFollowup(env, chatId, row.file_id, minutes.full || minutes.short);
     await sendMessage(env, chatId, out);
   } catch (e) {
