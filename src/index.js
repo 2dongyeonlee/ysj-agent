@@ -472,6 +472,13 @@ async function route(env, msg) {
     const kw = text.replace("/summary", "").trim();
     return summarizeLatest(env, chatId, kw);
   }
+  // "위에 3개 메세지 회의록으로 요약해줘" 등 — 최근 N개 텍스트 메시지를 회의록으로(녹음 아님).
+  // '회의록' 단어가 있어도 '메세지/대화 N개'면 녹음이 아니라 최근 메시지를 묶는다. /minutes 보다 먼저.
+  const msgCountMatch = text.match(/(\d+)\s*(?:개|건|줄)?\s*(?:dm|디엠)?\s*(?:메세지|메시지|대화)/);
+  if ((isDM || isMentioned) && msgCountMatch && /회의록|회의\s*요약|요약|정리/.test(text)) {
+    const n = parseInt(msgCountMatch[1], 10) || 30;
+    return summarizeRecentMessages(env, chatId, n);
+  }
   // 회의록 = STT와 분리된 별도 요청. 평범한 대화에 '회의록' 단어가 있다고 자동 생성하지 않는다.
   // 명령(/minutes)이거나, 봇을 직접 부른(DM·멘션) 자연어이거나, 특정 항목(녹음/문서)에 대한 답장일 때만.
   if (text.startsWith("/minutes")
