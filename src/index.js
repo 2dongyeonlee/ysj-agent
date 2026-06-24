@@ -9,7 +9,7 @@ import { handleVoice, makeMinutesFromStored, regenerateMinutesWithMeta, runVoice
 import { classifyIntent } from "./intent.js";
 import { sendMessage, sendDocument, sendDocumentBytes } from "./telegram.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
-import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks, checkInsights, dedupInsights, getResummaryTargets, updateInsightSummary } from "./db.js";
+import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks, checkInsights, dedupInsights, getResummaryTargets, updateInsightSummary, qLen } from "./db.js";
 import { resummarizeText } from "./insight.js";
 import { splitBriefingSections } from "./collect.js";
 import { runReclass } from "./reclass.js";
@@ -203,10 +203,10 @@ async function route(env, msg) {
         "\n   " + r.created_at;
     });
     const lock = await env.STATE.get("vq:lock");
-    const mj = await env.STATE.list({ prefix: "mj:" });
+    const mjLen = await qLen(env, "mj");
     return sendMessage(env, chatId,
       "🩺 <b>녹음 큐 상태</b> (이 방 id: <code>" + chatId + "</code>)\n" +
-      "락:" + (lock ? "처리중" : "없음") + " · 회의록대기:" + ((mj.keys || []).length) + "건\n\n" +
+      "락:" + (lock ? "처리중" : "없음") + " · 회의록대기:" + mjLen + "건\n\n" +
       lines.join("\n"));
   }
 

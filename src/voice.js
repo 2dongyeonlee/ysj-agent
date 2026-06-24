@@ -5,7 +5,7 @@
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage, senderName } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
-import { saveFile } from "./db.js";
+import { saveFile, qPush, qShift } from "./db.js";
 import { buildR2Key } from "./collect.js";
 
 async function getFileUrl(env, fileId) {
@@ -220,11 +220,9 @@ export async function runVoiceQueue(env) {
   await env.STATE.put("vq:lock", "1", { expirationTtl: 300 });
   try {
     // 1) 회의록 작성 대기 작업 우선 처리(사용자가 기다리는 중). 한 번에 1건.
-    const mj = await env.STATE.list({ prefix: "mj:" });
-    if (mj.keys && mj.keys.length) {
-      const key = mj.keys[0].name;
-      await env.STATE.delete(key);
-      await generateMinutes(env, key.slice(3)); // "mj:" 제거 → chatId
+    const mjChat = await qShift(env, "mj");
+    if (mjChat) {
+      await generateMinutes(env, String(mjChat));
       return;
     }
 
@@ -431,7 +429,7 @@ export async function summarizeMessagesUpTo(env, chatId, repliedMsg, n) {
   // anchor 못 찾았고 묶을 게 부족하면 reply 본문이라도 사용
   if (merged.length < 30) merged = String((repliedMsg && (repliedMsg.text || repliedMsg.caption)) || "").trim();
   if (merged.length < 30) return sendMessage(env, chatId, "묶을 회의 내용이 부족합니다.");
-  await env.STATE.put("tmin:" + chatId, merged.slice(0, 16000), { expirationTtl: 1800 });
+  await qPush(env, "tmin", { chatId: String(chatId), text: merged.slice(0, 16000) });
   return sendMessage(env, chatId,
     "📝 지목하신 지점 기준 " + lim + "개를 묶어 회의록을 작성하는 중입니다... 1~2분 후 도착합니다.");
 }
@@ -456,7 +454,7 @@ export async function summarizeMessageBlock(env, chatId, repliedMsg) {
   }
   if (merged.length < 30) merged = String(repliedMsg.text || repliedMsg.caption || "").trim();
   if (merged.length < 30) return sendMessage(env, chatId, "묶을 회의 내용이 부족합니다.");
-  await env.STATE.put("tmin:" + chatId, merged.slice(0, 16000), { expirationTtl: 1800 });
+  await qPush(env, "tmin", { chatId: String(chatId), text: merged.slice(0, 16000) });
   return sendMessage(env, chatId,
     "📝 회의 내용을 묶어 회의록을 작성하는 중입니다... 1~2분 후 도착합니다.");
 }
@@ -480,21 +478,19 @@ export async function summarizeRecentMessages(env, chatId, n) {
     .join("\n");
   if (merged.length < 30) return sendMessage(env, chatId, "요약할 내용이 충분하지 않습니다.");
   // 회의록 생성(LLM)은 웹훅 백그라운드 시간초과 위험 → KV에 싣고 매분 Cron이 처리.
-  await env.STATE.put("tmin:" + chatId, merged.slice(0, 16000), { expirationTtl: 1800 });
+  await qPush(env, "tmin", { chatId: String(chatId), text: merged.slice(0, 16000) });
   return sendMessage(env, chatId,
     "📝 최근 " + results.length + "개 대화로 회의록을 작성하는 중입니다... 1~2분 후 도착합니다.");
 }
 
 // Cron 이 호출 — 대기 중인 텍스트 회의록 작업(tmin:*)을 생성해 전송.
 export async function runTextMinutesQueue(env) {
-  let jobs;
-  try { jobs = await env.STATE.list({ prefix: "tmin:" }); }
-  catch (e) { console.error("text minutes list error", e && e.message); return; }
-  if (!jobs || !jobs.keys || !jobs.keys.length) return;
-  const key = jobs.keys[0].name;
-  const chatId = key.slice(5); // "tmin:" 제거
-  const merged = await env.STATE.get(key);
-  await env.STATE.delete(key);
+  let job;
+  try { job = await qShift(env, "tmin"); }
+  catch (e) { console.error("text minutes shift error", e && e.message); return; }
+  if (!job) return;
+  const chatId = job.chatId;
+  const merged = job.text;
   if (!merged) return;
   try {
     const minutes = await createMeetingMinutes(env, merged);
@@ -562,7 +558,7 @@ export async function makeMinutesFromStored(env, chatId) {
   }
   if (row.full_minutes) return sendMessage(env, chatId, await withMetaFollowup(env, chatId, row.file_id, row.full_minutes));
   // 상세본이 없으면 생성 작업을 큐에 넣는다. 다음 분 Cron(runVoiceQueue→generateMinutes)이 처리.
-  await env.STATE.put("mj:" + chatId, "1", { expirationTtl: 1800 });
+  await qPush(env, "mj", String(chatId), true);
   return sendMessage(env, chatId,
     "상세 회의록을 생성 중입니다. 1~2분 후 /minutes 를 다시 보내주세요."
   );

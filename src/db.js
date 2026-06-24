@@ -416,3 +416,36 @@ export async function updateInsightDone(env, project) {
   ).bind(String(project).trim()).run();
   return (r.meta && r.meta.changes) || 0;
 }
+
+// ── 단일 KV 키 FIFO 큐 (KV list() 일일 한도 회피용) ─────────────────────────
+// q:<name> 하나의 키에 JSON 배열로 보관. list() 대신 get/put 만 사용한다.
+export async function qPush(env, name, item, dedup) {
+  const k = "q:" + name;
+  let arr = [];
+  try { arr = JSON.parse((await env.STATE.get(k)) || "[]"); } catch (e) { arr = []; }
+  if (!Array.isArray(arr)) arr = [];
+  if (dedup) {
+    const s = JSON.stringify(item);
+    arr = arr.filter(function (x) { return JSON.stringify(x) !== s; });
+  }
+  arr.push(item);
+  if (arr.length > 50) arr = arr.slice(-50); // 폭주 방지
+  await env.STATE.put(k, JSON.stringify(arr), { expirationTtl: 3600 });
+}
+
+export async function qShift(env, name) {
+  const k = "q:" + name;
+  let arr = [];
+  try { arr = JSON.parse((await env.STATE.get(k)) || "[]"); } catch (e) { arr = []; }
+  if (!Array.isArray(arr) || !arr.length) return null; // 비었으면 put 안 함(쓰기 절약)
+  const item = arr.shift();
+  await env.STATE.put(k, JSON.stringify(arr), { expirationTtl: 3600 });
+  return item;
+}
+
+export async function qLen(env, name) {
+  try {
+    const arr = JSON.parse((await env.STATE.get("q:" + name)) || "[]");
+    return Array.isArray(arr) ? arr.length : 0;
+  } catch (e) { return 0; }
+}

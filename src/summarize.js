@@ -5,7 +5,7 @@ import { callClaude, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 import { loadProjectKeywords, matchProjects, detectDone, detectUrgent, classifyInfoCategory, normalizeProject, parseInfoMeta } from "./insight.js";
-import { saveFile, updateInsightDone } from "./db.js";
+import { saveFile, updateInsightDone, qPush, qShift } from "./db.js";
 import { createMeetingMinutes, withMetaFollowup } from "./voice.js";
 
 const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" + `문서를 읽고 JSON만 반환하라. 마크다운 금지.
@@ -108,35 +108,20 @@ async function saveMeetingDocument(env, msg, text, minutes) {
 }
 
 export async function enqueueDocumentSummary(env, chatId, msg, options = {}) {
-  const key = "ds:" + String(chatId) + ":" + String(msg.message_id || Date.now());
   const asMeeting = !!(options.asMeeting || options.forceMeeting);
-  await env.STATE.put(key, JSON.stringify({ chatId: String(chatId), msg, asMeeting, forceMeeting: asMeeting }), { expirationTtl: 1800 });
+  await qPush(env, "ds", { chatId: String(chatId), msg, asMeeting, forceMeeting: asMeeting });
 }
 
 export async function runDocumentSummaryQueue(env) {
-  const list = await env.STATE.list({ prefix: "ds:" });
-  if (!list.keys || !list.keys.length) return;
-  const key = list.keys[0].name;
-  const raw = await env.STATE.get(key);
-  if (!raw) {
-    await env.STATE.delete(key);
-    return;
-  }
-  let job = null;
-  try {
-    job = JSON.parse(raw);
-  } catch (e) {
-    console.error("document summary queue parse error", e && e.message);
-    await env.STATE.delete(key);
-    return;
-  }
+  let job;
+  try { job = await qShift(env, "ds"); }
+  catch (e) { console.error("document summary shift error", e && e.message); return; }
+  if (!job || !job.chatId) return;
   try {
     await summarizeFile(env, job.chatId, job.msg, true, { asMeeting: !!(job.asMeeting || job.forceMeeting) });
   } catch (e) {
     console.error("document summary queue error", e && (e.stack || e.message));
     await sendMessage(env, job.chatId, "문서 처리 중 오류가 발생했습니다. PDF가 스캔본/암호화 파일이면 텍스트 선택 가능한 PDF, .docx, 또는 .txt로 다시 보내주세요.");
-  } finally {
-    await env.STATE.delete(key);
   }
 }
 
