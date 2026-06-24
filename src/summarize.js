@@ -278,3 +278,85 @@ export async function summarizeLatest(env, chatId, keyword) {
   const out = await callClaude(env, "문서 내용:\n" + row.text.slice(0, 9000), SUMMARY_SYSTEM, MODEL_SMART, 1200);
   await sendMessage(env, chatId, out);
 }
+
+// reply 대상 + 자유 지시 → 지시대로 처리. 관련 자료가 DB에 있으면 참고로 보강.
+export async function smartReplyRequest(env, chatId, repliedMsg, instruction) {
+  // 1) 주 자료 추출 (텍스트 → 문서 → 최근 저장자료 순)
+  let source = "";
+  if (repliedMsg.text || repliedMsg.caption) {
+    source = String(repliedMsg.text || repliedMsg.caption).trim();
+  } else if (repliedMsg.document) {
+    try { source = await extractText(env, repliedMsg); } catch (e) { console.error("smartReply extract error", e && e.message); }
+  }
+  if (!source || source.length < 20) {
+    try {
+      const row = await env.DB.prepare(
+        "SELECT text FROM files WHERE chat_id = ? AND text != '' ORDER BY id DESC LIMIT 1"
+      ).bind(String(chatId)).first();
+      if (row && row.text) source = row.text;
+    } catch (e) { console.error("smartReply file error", e && e.message); }
+  }
+  if (!source || source.length < 20) {
+    return sendMessage(env, chatId, "대상 내용을 읽지 못했습니다. 다른 자료에 reply 해주세요.");
+  }
+  // 2) 관련 자료 끌어오기 (주 자료 첫 키워드로 insights 검색, 실패해도 무시)
+  let related = "";
+  try {
+    const kw = (source.replace(/[^\w가-힣 ]/g, " ").trim().split(/\s+/)[0] || "");
+    if (kw && kw.length >= 2) {
+      const { results } = await env.DB.prepare(
+        "SELECT summary FROM insights WHERE chat_id = ? AND summary != '' AND summary LIKE ? ORDER BY id DESC LIMIT 3"
+      ).bind(String(chatId), "%" + kw + "%").all();
+      related = (results || []).map(function (r) { return r.summary; }).filter(Boolean).join("\n");
+    }
+  } catch (e) { /* 무시 */ }
+  // 3) LLM: 지시 그대로 + 참고자료 보강
+  const sys = PERSONA_STYLE + "\n\n" +
+    "당신은 염성진 사장 보고 비서다. 사용자 요청을 그대로 이해해 [주 자료]를 처리하라. " +
+    "[참고 자료]는 관련 맥락으로만 활용하고 없으면 무시한다. " +
+    "이모지·마크다운 금지, HTML <b>만 사용. 표가 필요하면 줄/구분선으로 텔레그램에서 보기 좋게. " +
+    "요청에 형식 지정이 없으면 다음 양식: ■ <b>배경</b> / ■ <b>주요 내용</b> / ■ <b>Action Item</b> / ■ <b>일정</b> / ■ <b>참석/관계자</b>. " +
+    "자료에 없는 내용은 지어내지 말 것.";
+  const prompt = "[사용자 요청]\n" + instruction +
+    "\n\n[주 자료]\n" + source.slice(0, 10000) +
+    (related ? ("\n\n[참고 자료]\n" + related.slice(0, 2000)) : "");
+  try {
+    const out = await callClaude(env, prompt, sys, MODEL_SMART, 2500);
+    return sendMessage(env, chatId, out || "처리에 실패했습니다. 다시 시도해주세요.");
+  } catch (e) {
+    console.error("smartReplyRequest error", e && (e.stack || e.message));
+    return sendMessage(env, chatId, "처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+  }
+}
+
+// "OO 담당 오늘 공유자료 요약" → 발신자/날짜로 files 검색 후 요약. 못 찾으면 false.
+export async function searchAndSummarize(env, chatId, text) {
+  const sm = text.match(/([가-힣]{2,4})\s*(담당|TL|팀장|실장|부사장|사장|님|선임|책임)/);
+  const sender = sm ? sm[1] : "";
+  let dateCond = "";
+  if (/오늘/.test(text))        dateCond = "date(created_at,'localtime') = date('now','localtime')";
+  else if (/어제/.test(text))   dateCond = "date(created_at,'localtime') = date('now','-1 day','localtime')";
+  else if (/이번\s*주|금주/.test(text)) dateCond = "date(created_at,'localtime') >= date('now','-7 day','localtime')";
+  let sql = "SELECT filename, text FROM files WHERE chat_id = ? AND text != ''";
+  const binds = [String(chatId)];
+  if (sender)   { sql += " AND sender LIKE ?"; binds.push("%" + sender + "%"); }
+  if (dateCond) { sql += " AND " + dateCond; }
+  sql += " ORDER BY id DESC LIMIT 5";
+  let rows;
+  try { rows = (await env.DB.prepare(sql).bind(...binds).all()).results; }
+  catch (e) { console.error("searchAndSummarize query error", e && e.message); return false; }
+  if (!rows || !rows.length) return false;
+  const merged = rows.map(function (r) { return "[" + (r.filename || "자료") + "]\n" + r.text; }).join("\n\n").slice(0, 10000);
+  const sys = PERSONA_STYLE + "\n\n" +
+    "당신은 염성진 사장 보고 비서다. 아래 자료를 다음 양식으로 요약하라. " +
+    "■ <b>배경</b> / ■ <b>주요 내용</b> / ■ <b>Action Item</b> / ■ <b>일정</b> / ■ <b>참석/관계자</b>. " +
+    "이모지·마크다운 금지, HTML <b>만. 없는 내용 창작 금지.";
+  try {
+    const out = await callClaude(env, "자료:\n" + merged, sys, MODEL_SMART, 2500);
+    await sendMessage(env, chatId, out || "요약에 실패했습니다.");
+  } catch (e) {
+    console.error("searchAndSummarize llm error", e && (e.stack || e.message));
+    await sendMessage(env, chatId, "요약 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+  }
+  return true;
+}

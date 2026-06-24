@@ -1,7 +1,7 @@
 // index.js — entry point. routing only. Bot stays silent unless explicitly called.
 import { collectMessage } from "./collect.js";
 import { runMorningBriefing, runBrief } from "./briefing.js";
-import { enqueueDocumentSummary, runDocumentSummaryQueue, summarizeFile, summarizeLatest } from "./summarize.js";
+import { enqueueDocumentSummary, runDocumentSummaryQueue, summarizeFile, summarizeLatest, smartReplyRequest, searchAndSummarize } from "./summarize.js";
 import { handleQA } from "./qa.js";
 import { runInfoBriefing } from "./info.js";
 import { runProjectBriefing } from "./project.js";
@@ -470,7 +470,11 @@ async function route(env, msg) {
     if (isAudioMsg(msg.reply_to_message)) return handleVoice(env, chatId, msg.reply_to_message, true);
     if (isDocumentMsg(msg)) return summarizeDocumentRequest(msg, false);
     if (isDocumentMsg(msg.reply_to_message)) return summarizeDocumentRequest(msg.reply_to_message, false);
+    if (msg.reply_to_message && (msg.reply_to_message.text || msg.reply_to_message.caption)) {
+      return smartReplyRequest(env, chatId, msg.reply_to_message, "보고용으로 요약해줘");
+    }
     const kw = text.replace("/summary", "").trim();
+    if (!kw) return sendMessage(env, chatId, "요약할 대상을 알려주세요. 자료/녹음/메시지에 reply 하거나 '/summary 키워드' 로 검색하세요.");
     return summarizeLatest(env, chatId, kw);
   }
   // "위에 3개 메세지 회의록으로 요약해줘" 등 — 최근 N개 텍스트 메시지를 회의록으로(녹음 아님).
@@ -551,6 +555,15 @@ async function route(env, msg) {
   // so answers are identical in quality. Group: only when mentioned. 1:1: always.
   const cleanText = text;
   if ((isDM && text) || isMentioned) {
+    // 발신자/날짜 기준 자료 검색 요약: "손경배 담당 오늘 공유자료 요약"
+    if (!msg.reply_to_message && /(자료|공유자료|문서).*(요약|정리|보여)/.test(cleanText)) {
+      const done = await searchAndSummarize(env, chatId, cleanText);
+      if (done) return;
+    }
+    // 텍스트 메시지 reply + 자유 지시 → 카테고리 분류 우회, 지시대로 처리(+관련자료)
+    if (msg.reply_to_message && (msg.reply_to_message.text || msg.reply_to_message.caption) && cleanText && cleanText.length >= 2) {
+      return smartReplyRequest(env, chatId, msg.reply_to_message, cleanText);
+    }
     const { intent, target } = await classifyIntent(env, cleanText);
     switch (intent) {
       case "summary":
