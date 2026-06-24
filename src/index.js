@@ -5,7 +5,7 @@ import { enqueueDocumentSummary, runDocumentSummaryQueue, summarizeFile, summari
 import { handleQA } from "./qa.js";
 import { runInfoBriefing } from "./info.js";
 import { runProjectBriefing } from "./project.js";
-import { handleVoice, makeMinutesFromStored, regenerateMinutesWithMeta, runVoiceQueue, summarizeRecentMessages } from "./voice.js";
+import { handleVoice, makeMinutesFromStored, regenerateMinutesWithMeta, runVoiceQueue, summarizeRecentMessages, runTextMinutesQueue } from "./voice.js";
 import { classifyIntent } from "./intent.js";
 import { sendMessage, sendDocument, sendDocumentBytes } from "./telegram.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
@@ -126,6 +126,7 @@ export default {
     if (event.cron === "* * * * *") {
       ctx.waitUntil((async function () {
         await runDocumentSummaryQueue(env);
+        await runTextMinutesQueue(env);
         await runVoiceQueue(env);
       })().catch((e) => console.error("minute queue error", (e && e.stack) || e)));
       return;
