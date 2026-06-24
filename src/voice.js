@@ -403,6 +403,39 @@ function extractJsonString(raw, key) {
     .trim();
 }
 
+// reply 지점 기준으로 위로 N개 메시지를 묶어 회의록(발신자 무관). "위에 3개 요약" 용.
+// reply 메시지를 못 찾으면 최근 N개로 폴백. LLM 생성은 Cron 큐(tmin)로.
+export async function summarizeMessagesUpTo(env, chatId, repliedMsg, n) {
+  const lim = Math.max(1, Math.min(parseInt(n, 10) || 3, 100));
+  let merged = "";
+  try {
+    let anchorId = null;
+    if (repliedMsg && repliedMsg.message_id) {
+      const anchor = await env.DB.prepare(
+        "SELECT id FROM messages WHERE chat_id = ? AND message_id = ? LIMIT 1"
+      ).bind(String(chatId), String(repliedMsg.message_id)).first();
+      if (anchor) anchorId = anchor.id;
+    }
+    const sql = anchorId != null
+      ? "SELECT sender, text FROM messages WHERE chat_id = ? AND id <= ? AND text != '' AND text NOT LIKE '/%' ORDER BY id DESC LIMIT ?"
+      : "SELECT sender, text FROM messages WHERE chat_id = ? AND text != '' AND text NOT LIKE '/%' ORDER BY id DESC LIMIT ?";
+    const binds = anchorId != null ? [String(chatId), anchorId, lim] : [String(chatId), lim];
+    const { results } = await env.DB.prepare(sql).bind(...binds).all();
+    merged = (results || []).reverse()
+      .map(function (r) { return (r.sender ? r.sender + ": " : "") + r.text; })
+      .join("\n");
+  } catch (e) {
+    console.error("summarizeMessagesUpTo query error", e && e.message);
+    return sendMessage(env, chatId, "메시지를 불러오는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+  }
+  // anchor 못 찾았고 묶을 게 부족하면 reply 본문이라도 사용
+  if (merged.length < 30) merged = String((repliedMsg && (repliedMsg.text || repliedMsg.caption)) || "").trim();
+  if (merged.length < 30) return sendMessage(env, chatId, "묶을 회의 내용이 부족합니다.");
+  await env.STATE.put("tmin:" + chatId, merged.slice(0, 16000), { expirationTtl: 1800 });
+  return sendMessage(env, chatId,
+    "📝 지목하신 지점 기준 " + lim + "개를 묶어 회의록을 작성하는 중입니다... 1~2분 후 도착합니다.");
+}
+
 // 텍스트 메시지 reply → 같은 발신자가 연속으로 올린 블록을 묶어 회의록.
 // LLM 생성은 웹훅 시간초과 방지를 위해 Cron 큐(tmin)로 보낸다.
 export async function summarizeMessageBlock(env, chatId, repliedMsg) {
