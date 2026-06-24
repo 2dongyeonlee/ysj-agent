@@ -403,6 +403,31 @@ function extractJsonString(raw, key) {
     .trim();
 }
 
+// 텍스트 메시지 reply → 같은 발신자가 연속으로 올린 블록을 묶어 회의록.
+// LLM 생성은 웹훅 시간초과 방지를 위해 Cron 큐(tmin)로 보낸다.
+export async function summarizeMessageBlock(env, chatId, repliedMsg) {
+  let merged = "";
+  try {
+    const anchor = await env.DB.prepare(
+      "SELECT id, sender FROM messages WHERE chat_id = ? AND message_id = ? LIMIT 1"
+    ).bind(String(chatId), String(repliedMsg.message_id || "")).first();
+    if (anchor) {
+      const { results } = await env.DB.prepare(
+        "SELECT text FROM messages WHERE chat_id = ? AND sender = ? AND text != '' " +
+        "AND text NOT LIKE '/%' AND id BETWEEN ? AND ? ORDER BY id ASC"
+      ).bind(String(chatId), anchor.sender, anchor.id - 40, anchor.id + 40).all();
+      merged = (results || []).map(function (r) { return r.text; }).join("\n");
+    }
+  } catch (e) {
+    console.error("summarizeMessageBlock query error", e && e.message);
+  }
+  if (merged.length < 30) merged = String(repliedMsg.text || repliedMsg.caption || "").trim();
+  if (merged.length < 30) return sendMessage(env, chatId, "묶을 회의 내용이 부족합니다.");
+  await env.STATE.put("tmin:" + chatId, merged.slice(0, 16000), { expirationTtl: 1800 });
+  return sendMessage(env, chatId,
+    "📝 회의 내용을 묶어 회의록을 작성하는 중입니다... 1~2분 후 도착합니다.");
+}
+
 // 녹음 없이 최근 텍스트 대화를 묶어 회의록으로 정리. 슬래시 명령은 제외.
 export async function summarizeRecentMessages(env, chatId, n) {
   const lim = Math.max(1, Math.min(parseInt(n, 10) || 30, 100));
