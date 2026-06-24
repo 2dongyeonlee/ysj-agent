@@ -148,6 +148,10 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false, optio
     }
     return;
   }
+  // 긴 자료만 처리 시간이 걸리므로 안내(짧은 자료엔 표시 안 함).
+  if (replyToUser && String(text).length >= 4000) {
+    await sendMessage(env, chatId, "처리 중입니다…");
+  }
   if (/^\[(document parse failed|docx parse failed|docx text not found|docx compression unsupported|file too large|legacy Word|only PDF)/i.test(String(text).trim())) {
     if (replyToUser) {
       await sendMessage(env, chatId, "문서 본문을 읽지 못했습니다. PDF는 텍스트가 선택되는 파일로, Word는 .docx 또는 .txt로 다시 보내주세요.");
