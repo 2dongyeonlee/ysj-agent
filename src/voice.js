@@ -198,8 +198,8 @@ export async function handleVoice(env, chatId, msg, replyToUser = false) {
 
   if (replyToUser) {
     await sendMessage(env, chatId,
-      "🎙 녹음을 받았습니다. 받아쓰는 중이며 1~2분 내 전사가 도착합니다. (긴 녹음일수록 조금 더 걸려요)\n" +
-      "전사가 오면 '회의록' 또는 /minutes 로 회의록을 받을 수 있습니다.");
+      "🎙 녹음을 받았습니다. 받아쓰는 중이며 1~2분 내 회의록이 자동으로 도착합니다. (긴 녹음일수록 조금 더 걸려요)\n" +
+      "더 상세한 전체 회의록이 필요하면 도착 후 /minutes 를 보내주세요.");
   }
 }
 
@@ -545,7 +545,18 @@ async function latestMeeting(env, chatId) {
 // 즉시 안내한다. 실제 회의록 생성(LLM)은 매분 Cron(generateMinutes)이 처리한다.
 // (긴 전사의 회의록 생성도 웹훅 백그라운드 한도를 넘겨 멈추므로 Cron으로 분리.)
 export async function makeMinutesFromStored(env, chatId) {
+  // 가장 최근 녹음이 아직 받아쓰는 중이면, 옛 회의록을 내지 말고 안내(자동 도착).
+  let pending = null;
+  try {
+    pending = await env.DB.prepare(
+      "SELECT id FROM files WHERE chat_id = ? AND (text IS NULL OR text = '') AND r2_key != '' AND " +
+      VOICE_AUDIO_LIKE + " AND created_at >= datetime('now','-2 hours') ORDER BY id DESC LIMIT 1"
+    ).bind(String(chatId)).first();
+  } catch (e) { console.error("makeMinutes pending check error", e && e.message); }
   const row = await latestMeeting(env, chatId);
+  if (pending && (!row || pending.id > row.id)) {
+    return sendMessage(env, chatId, "방금 보낸 녹음을 아직 받아쓰는 중입니다. 1~2분 뒤 회의록이 자동으로 도착합니다.");
+  }
   if (!row || !row.text) {
     return sendMessage(env, chatId, "최근 받아쓰기를 찾지 못했습니다. 녹음을 먼저 보내주세요.");
   }
