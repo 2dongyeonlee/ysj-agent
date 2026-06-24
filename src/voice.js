@@ -391,19 +391,32 @@ export async function createMeetingMinutes(env, transcript) {
 // 녹음 없이 최근 텍스트 대화를 묶어 회의록으로 정리. 슬래시 명령은 제외.
 export async function summarizeRecentMessages(env, chatId, n) {
   const lim = Math.max(1, Math.min(parseInt(n, 10) || 30, 100));
-  const { results } = await env.DB.prepare(
-    "SELECT sender, text FROM messages WHERE chat_id = ? AND text != '' " +
-    "AND text NOT LIKE '/%' ORDER BY id DESC LIMIT ?"
-  ).bind(String(chatId), lim).all();
+  let results;
+  try {
+    ({ results } = await env.DB.prepare(
+      "SELECT sender, text FROM messages WHERE chat_id = ? AND text != '' " +
+      "AND text NOT LIKE '/%' ORDER BY id DESC LIMIT ?"
+    ).bind(String(chatId), lim).all());
+  } catch (e) {
+    console.error("summarizeRecentMessages query error", e && e.message);
+    return sendMessage(env, chatId, "메시지를 불러오는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+  }
   if (!results || !results.length) return sendMessage(env, chatId, "요약할 최근 대화가 없습니다.");
   const merged = results.reverse()
     .map(function (r) { return (r.sender ? r.sender + ": " : "") + r.text; })
     .join("\n");
   if (merged.length < 30) return sendMessage(env, chatId, "요약할 내용이 충분하지 않습니다.");
-  const minutes = await createMeetingMinutes(env, merged);   // 기존 회의록 생성 재사용
-  let body = (minutes && (minutes.full || minutes.short)) || "회의록 생성 실패.";
-  if (/미상|미정/.test(body)) body += "\n\n날짜·참석 명단·주요 아젠다를 알려주시면 반영해 다시 작성해 드립니다.";
-  return sendMessage(env, chatId, body);
+  // 접수 안내 — LLM 생성이 길어도 사용자가 '먹통'으로 느끼지 않게 즉시 반응.
+  await sendMessage(env, chatId, "📝 최근 " + results.length + "개 대화로 회의록을 작성하는 중입니다...");
+  try {
+    const minutes = await createMeetingMinutes(env, merged);   // 기존 회의록 생성 재사용
+    let body = (minutes && (minutes.full || minutes.short)) || "회의록 생성에 실패했습니다. 다시 시도해주세요.";
+    if (/미상|미정/.test(body)) body += "\n\n날짜·참석 명단·주요 아젠다를 알려주시면 반영해 다시 작성해 드립니다.";
+    return sendMessage(env, chatId, body);
+  } catch (e) {
+    console.error("summarizeRecentMessages minutes error", e && (e.stack || e.message));
+    return sendMessage(env, chatId, "회의록 작성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+  }
 }
 
 async function saveMeetingInsight(env, row) {
