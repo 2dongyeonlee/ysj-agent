@@ -116,7 +116,12 @@ export default {
     // 무거운 처리(녹음 STT·요약 등)는 응답을 막지 않도록 백그라운드로 돌린다.
     // Telegram 에 즉시 200 을 돌려줘 웹훅 타임아웃(~60s)·재시도·중복 전송을 방지.
     ctx.waitUntil(
-      route(env, msg).catch((e) => console.error("route error", (e && e.stack) || e))
+      route(env, msg).catch((e) => {
+        console.error("route error", (e && e.stack) || e);
+        // 무응답('먹통') 대신 오류를 사용자에게 알린다(진단·UX). 전송 실패는 무시.
+        const cid = msg.chat && msg.chat.id;
+        if (cid) return sendMessage(env, cid, "⚠️ 처리 중 오류가 발생했습니다: " + String((e && e.message) || e).slice(0, 300)).catch(() => {});
+      })
     );
     return new Response("ok");
   },
