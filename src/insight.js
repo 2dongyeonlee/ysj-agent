@@ -72,6 +72,18 @@ function compactLen(kw) {
   return String(kw || "").replace(/[\s\-]/g, "").length;
 }
 
+// 요약 폴백이 원문 머리말 찌꺼기(페이지번호·주차마커 ww25·기밀표시 등)를 그대로
+// 가져오지 않도록 앞부분을 정제한다.
+function cleanDocArtifacts(s) {
+  return String(s || "")
+    .replace(/<\/?[a-zA-Z]+>/g, " ")
+    .replace(/\bww\s*\d+\b/gi, " ")                          // 주차 마커 ww25
+    .replace(/\b(confidential|secret|대외비|내부자료|내부용)\b/gi, " ")
+    .replace(/^[\s\d.)\]\-·•]+/, "")                         // 앞쪽 페이지번호·불릿·머리기호
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 // 캡션에서 #해시태그 추출 (#넥서스, #용인 ...)
 function captionTags(caption) {
   const out = [];
@@ -308,7 +320,7 @@ export async function resummarizeText(env, text) {
   let summary = stripSalutation(String(parsed.summary || "").trim()
     .replace(/^\[(보고요망|보고|공유|참고|검토요망|검토|긴급|중요)\]\s*/g, ""));
   if (!summary) {
-    summary = stripSalutation(String(body).replace(/<\/?[a-zA-Z]+>/g, "").trim())
+    summary = stripSalutation(cleanDocArtifacts(body))
       .split(/(?<=[.!?。]|다\.|임\.|음\.)\s+/u)[0].slice(0, 80).trim();
   }
   if (!summary) return null;
@@ -359,11 +371,9 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
     let summary = stripSalutation(String(parsed.summary || "").trim()
       .replace(/^\[(보고요망|보고|공유|참고|검토요망|검토|긴급|중요)\]\s*/g, ""));
     if (!summary) {
-      // LLM 요약 실패 시 원문에서 인사말을 떼고 첫 문장을 정제해 사용
-      summary = stripSalutation(String(body || "")
-        .replace(/<\/?[a-zA-Z]+>/g, "")
-        .replace(/^\[(보고요망|보고|공유|참고|검토)\]\s*/g, "")
-        .trim())
+      // LLM 요약 실패 시 원문에서 인사말·머리말 찌꺼기를 떼고 첫 문장을 정제해 사용
+      summary = stripSalutation(cleanDocArtifacts(String(body || "")
+        .replace(/^\[(보고요망|보고|공유|참고|검토)\]\s*/g, "")))
         .split(/(?<=[.!?。]|다\.|임\.|음\.)\s+/u)[0]
         .slice(0, 60)
         .trim();
