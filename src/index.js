@@ -125,10 +125,12 @@ export default {
     // 매분 Cron — 대기 중인 녹음 받아쓰기(STT). 웹훅보다 실행시간이 길어 긴 녹음도 처리.
     if (event.cron === "* * * * *") {
       ctx.waitUntil((async function () {
-        await runDocumentSummaryQueue(env);
-        await runTextMinutesQueue(env);
-        await runVoiceQueue(env);
-      })().catch((e) => console.error("minute queue error", (e && e.stack) || e)));
+        // 각 큐를 독립 실행 — 한 큐가 실패해도 다른 큐(특히 녹음 STT)는 계속 돈다.
+        // 녹음 STT를 먼저 — 가장 중요하고 오래 걸려, 다른 큐에 시간을 뺏기지 않게.
+        try { await runVoiceQueue(env); } catch (e) { console.error("voice queue error", (e && e.stack) || e); }
+        try { await runTextMinutesQueue(env); } catch (e) { console.error("text minutes queue error", (e && e.stack) || e); }
+        try { await runDocumentSummaryQueue(env); } catch (e) { console.error("doc summary queue error", (e && e.stack) || e); }
+      })());
       return;
     }
     // 평일 아침 브리핑.
