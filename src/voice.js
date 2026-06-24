@@ -406,16 +406,31 @@ export async function summarizeRecentMessages(env, chatId, n) {
     .map(function (r) { return (r.sender ? r.sender + ": " : "") + r.text; })
     .join("\n");
   if (merged.length < 30) return sendMessage(env, chatId, "요약할 내용이 충분하지 않습니다.");
-  // 접수 안내 — LLM 생성이 길어도 사용자가 '먹통'으로 느끼지 않게 즉시 반응.
-  await sendMessage(env, chatId, "📝 최근 " + results.length + "개 대화로 회의록을 작성하는 중입니다...");
+  // 회의록 생성(LLM)은 웹훅 백그라운드 시간초과 위험 → KV에 싣고 매분 Cron이 처리.
+  await env.STATE.put("tmin:" + chatId, merged.slice(0, 16000), { expirationTtl: 1800 });
+  return sendMessage(env, chatId,
+    "📝 최근 " + results.length + "개 대화로 회의록을 작성하는 중입니다... 1~2분 후 도착합니다.");
+}
+
+// Cron 이 호출 — 대기 중인 텍스트 회의록 작업(tmin:*)을 생성해 전송.
+export async function runTextMinutesQueue(env) {
+  let jobs;
+  try { jobs = await env.STATE.list({ prefix: "tmin:" }); }
+  catch (e) { console.error("text minutes list error", e && e.message); return; }
+  if (!jobs || !jobs.keys || !jobs.keys.length) return;
+  const key = jobs.keys[0].name;
+  const chatId = key.slice(5); // "tmin:" 제거
+  const merged = await env.STATE.get(key);
+  await env.STATE.delete(key);
+  if (!merged) return;
   try {
-    const minutes = await createMeetingMinutes(env, merged);   // 기존 회의록 생성 재사용
+    const minutes = await createMeetingMinutes(env, merged);
     let body = (minutes && (minutes.full || minutes.short)) || "회의록 생성에 실패했습니다. 다시 시도해주세요.";
     if (/미상|미정/.test(body)) body += "\n\n날짜·참석 명단·주요 아젠다를 알려주시면 반영해 다시 작성해 드립니다.";
-    return sendMessage(env, chatId, body);
+    await sendMessage(env, chatId, body);
   } catch (e) {
-    console.error("summarizeRecentMessages minutes error", e && (e.stack || e.message));
-    return sendMessage(env, chatId, "회의록 작성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+    console.error("runTextMinutesQueue error", e && (e.stack || e.message));
+    await sendMessage(env, chatId, "회의록 작성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
   }
 }
 
