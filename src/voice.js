@@ -390,7 +390,7 @@ export async function createMeetingMinutes(env, transcript) {
 
 // 녹음 없이 최근 텍스트 대화를 묶어 회의록으로 정리. 슬래시 명령은 제외.
 export async function summarizeRecentMessages(env, chatId, n) {
-  const lim = Math.max(5, Math.min(parseInt(n, 10) || 30, 100));
+  const lim = Math.max(1, Math.min(parseInt(n, 10) || 30, 100));
   const { results } = await env.DB.prepare(
     "SELECT sender, text FROM messages WHERE chat_id = ? AND text != '' " +
     "AND text NOT LIKE '/%' ORDER BY id DESC LIMIT ?"
