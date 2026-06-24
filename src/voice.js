@@ -105,6 +105,7 @@ const VOICE_SYSTEM = PERSONA_STYLE + "\n\n" +
 
 const MEETING_JSON_SYSTEM = PERSONA_STYLE + "\n\n" +
   "아래 받아쓰기 전문을 읽고 JSON만 반환하라. 마크다운 코드블록 금지.\n" +
+  "어떤 머리말·설명·인사도 붙이지 마라('아래는 ... JSON입니다' 같은 문장 금지). 응답은 반드시 '{' 로 시작해 '}' 로 끝낸다.\n" +
   "반환 스키마는 정확히 {\"short\":\"...\",\"full\":\"...\"} 이다.\n\n" +
   "[공통 원칙]\n" +
   "- 임원이 사장에게 올리는 보고용 회의록이다. 발화 복원·중복·군더더기 금지, 결론 중심으로 간결히.\n" +
@@ -381,11 +382,25 @@ export async function createMeetingMinutes(env, transcript) {
     parsed = parseJsonObject(raw);
   } catch (e) {
     console.error("meeting minutes JSON parse error", e && e.message);
-    return { short: String(raw || "").slice(0, 1200).trim() || fallbackShortMinutes(transcript), full: null };
+    // 머리말("아래는 ... JSON입니다.")이나 토큰 잘림으로 JSON이 깨져도
+    // short/full 문자열 필드만 정규식으로 건져 깔끔히 쓴다(원본 JSON 노출 방지).
+    const short = extractJsonString(raw, "short") || fallbackShortMinutes(transcript);
+    const full = extractJsonString(raw, "full") || null;
+    return { short, full };
   }
   const short = String(parsed.short || "").trim() || fallbackShortMinutes(transcript);
   const full = String(parsed.full || "").trim() || null;
   return { short, full };
+}
+
+// 깨진/잘린 JSON에서 "key":"...값..." 의 문자열 값만 추출(이스케이프 복원).
+function extractJsonString(raw, key) {
+  const m = String(raw || "").match(new RegExp('"' + key + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"'));
+  if (!m) return "";
+  return m[1]
+    .replace(/\\n/g, "\n").replace(/\\t/g, "\t")
+    .replace(/\\"/g, '"').replace(/\\\\/g, "\\")
+    .trim();
 }
 
 // 녹음 없이 최근 텍스트 대화를 묶어 회의록으로 정리. 슬래시 명령은 제외.
