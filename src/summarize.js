@@ -269,32 +269,33 @@ export async function summarizeLatest(env, chatId, keyword) {
 }
 
 export async function handleSenderQuery(env, chatId, query) {
-  const found = await searchBySender(env, query);
-  if (!found) return false;   // 폴백 신호
-  const rows = found.rows || [];
-  if (!rows.length) {
-    await sendMessage(env, chatId, `${found.name} 님이 최근 24시간 안에 공유·전달한 자료를 찾지 못했습니다.`);
+  const hit = await searchBySender(env, query);
+  if (!hit) return false;                         // 발신자 의도 아님 → smartReplyRequest로 폴백
+
+  if (!hit.rows.length) {                         // 발신자는 맞음 + 24h 내 자료 0 → 회의록 끌어오기 차단
+    await sendMessage(env, chatId, `${hit.name}님이 최근 24시간 내 공유한 내용이 없습니다.`);
     return true;
   }
-  const ctx = rows.map(r =>
+
+  const ctx = hit.rows.map(r =>
     (r.filename ? `[파일:${r.filename}] ` : "") + `${r.sender}: ${r.text}`
   ).join("\n");
 
   const sys = PERSONA_STYLE + "\n\n" +
-    "특정 인물이 최근 공유·전달한 내용을 정리하라. 단순 나열 요약이 아니라, " +
+    "특정 인물이 최근 24시간 공유·전달한 내용을 정리하라. 단순 나열 요약이 아니라, " +
     "끝에 '사장 시사점' 1줄을 붙인다 — 염성진 사장이 상위(회장·그룹)에 보고할 때 쓸 멘트 관점으로, " +
-    "이 내용이 갖는 의미·대응 포인트를 한 문장으로. " +
+    "이 내용의 의미·대응 포인트를 한 문장. " +
     "이모지·마크다운 금지, HTML <b>만. 자료에 없는 내용은 지어내지 말 것.\n" +
     "형식: ■ <b>핵심</b> / ■ <b>주요 내용</b> / ■ <b>사장 시사점</b>(1줄)";
 
-  const prompt = "[요청]\n" + query + "\n\n[해당 인물 최근 공유]\n" + ctx.slice(0, 8000);
+  const prompt = "[요청]\n" + query + "\n\n[해당 인물 최근 24시간 공유]\n" + ctx.slice(0, 8000);
   try {
     const out = await callClaude(env, prompt, sys, MODEL_FAST, 2000);
     await sendMessage(env, chatId, out || "요약 실패. 다시 시도해주세요.");
     return true;
   } catch (e) {
     console.error("handleSenderQuery error:", e && e.message);
-    return false;
+    return true;     // 발신자 확정됐으니 폴백 막음(회의록 오출력 방지)
   }
 }
 
