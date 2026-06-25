@@ -362,7 +362,6 @@ function minutesTargetChat(env, fallbackChatId) {
 export async function runVoiceQueue(env) {
   if (await env.STATE.get("vq:lock")) return; // 이미 처리 중
   await env.STATE.put("vq:lock", "1", { expirationTtl: 300 });
-  const tickStart = Date.now(); // 전사 소요시간 측정용(짧은 녹음 inline 판단)
   try {
     // 1) 회의록 작성 대기 작업 우선 처리(사용자가 기다리는 중). 한 번에 1건.
     const mjChat = await qShift(env, "mj");
@@ -371,85 +370,115 @@ export async function runVoiceQueue(env) {
       return;
     }
 
-    // 2) 받아쓰기 대기 처리. 오래된 순으로 후보를 보되, 최근 시도한 행은 건너뛴다
-    //    — 길거나 실패하는 한 건이 큐 전체(특히 다른 방 녹음)를 막지 않도록(공정성).
+    // 2) AssemblyAI 재폴링 우선: 이미 제출됐고(aai_id 있음) 아직 전사 안 된 행을 1회 폴링.
+    if (env.ASSEMBLYAI_API_KEY) {
+      const pend = (await env.DB.prepare(
+        "SELECT id, chat_id, file_id, aai_id, aai_polls, sender FROM files " +
+        "WHERE aai_id IS NOT NULL AND aai_id != '' AND (text IS NULL OR text = '') " +
+        "AND created_at >= datetime('now','-2 hours') ORDER BY id ASC LIMIT 1"
+      ).first());
+      if (pend) {
+        const polls = (pend.aai_polls || 0) + 1;
+        // 최대 폴링 횟수 초과(약 40분) → 실패 처리
+        if (polls > 40) {
+          await env.DB.prepare("UPDATE files SET text = ?, doc_type = 'meeting' WHERE id = ?")
+            .bind("[받아쓰기 실패: 시간 초과]", pend.id).run();
+          await sendMessage(env, minutesTargetChat(env, pend.chat_id),
+            "받아쓰기가 시간 내 끝나지 않았습니다. 녹음을 10분 내외로 나눠 다시 보내주세요.");
+          return;
+        }
+        await env.DB.prepare("UPDATE files SET aai_polls = ? WHERE id = ?").bind(polls, pend.id).run();
+        let r;
+        try { r = await pollAssemblyAI(env, pend.aai_id); }
+        catch (e) { console.error("AAI poll error", pend.id, e && e.message); return; }
+        if (r.status === "completed") {
+          const transcript = (r.plain || "").trim();
+          const timed = (r.timed || "").trim();
+          if (!transcript) {
+            await env.DB.prepare("UPDATE files SET text = ? WHERE id = ?").bind("[받아쓰기 실패]", pend.id).run();
+            await sendMessage(env, minutesTargetChat(env, pend.chat_id), "받아쓰기 결과가 비어 있습니다. 다시 보내주세요.");
+            return;
+          }
+          await env.DB.prepare("UPDATE files SET text = ?, timed_text = ?, doc_type = 'meeting' WHERE id = ?")
+            .bind(transcript.slice(0, 16000), timed.slice(0, 16000), pend.id).run();
+          await qPush(env, "mj", String(pend.chat_id), true);
+          await sendMessage(env, minutesTargetChat(env, pend.chat_id), "🎙 받아쓰기 완료. 회의록을 작성 중입니다… 잠시 후 도착합니다.");
+          return;
+        }
+        if (r.status === "error") {
+          await env.DB.prepare("UPDATE files SET text = ? WHERE id = ?").bind("[받아쓰기 실패]", pend.id).run();
+          await sendMessage(env, minutesTargetChat(env, pend.chat_id), "받아쓰기에 실패했습니다(음질·형식 문제일 수 있음). 다시 보내주세요.");
+          return;
+        }
+        // processing/queued → 다음 틱에서 다시 폴링
+        return;
+      }
+    }
+
+    // 3) 제출 대기 처리: 아직 AssemblyAI에 안 보낸 녹음을 업로드+전사요청만(폴링 안 함).
     const cands = (await env.DB.prepare(
       "SELECT id, chat_id, file_id, r2_key, filename, sender FROM files " +
-      "WHERE (text IS NULL OR text = '') AND r2_key != '' AND " + VOICE_AUDIO_LIKE + " " +
+      "WHERE (text IS NULL OR text = '') AND (aai_id IS NULL OR aai_id = '') AND r2_key != '' AND " + VOICE_AUDIO_LIKE + " " +
       "AND NOT EXISTS (SELECT 1 FROM files f2 WHERE f2.file_id = files.file_id AND f2.text != '') " +
       "AND created_at >= datetime('now','-2 hours') ORDER BY id ASC LIMIT 6"
     ).all()).results || [];
     let row = null;
     for (const c of cands) {
-      if (await env.STATE.get("vq:cool:" + c.id)) continue; // 최근 시도함 → 다음 기회에
-      row = c;
-      break;
+      if (await env.STATE.get("vq:cool:" + c.id)) continue;
+      row = c; break;
     }
     if (!row) return;
     const chatId = row.chat_id;
-    await env.STATE.put("vq:cool:" + row.id, "1", { expirationTtl: 360 }); // 6분 쿨다운
+    await env.STATE.put("vq:cool:" + row.id, "1", { expirationTtl: 360 });
 
-    // 반복 실패 차단 — 2회 시도 후 sentinel 저장하고 안내(더는 대기 대상이 아님).
     const attKey = "vq:att:" + row.id;
     const att = parseInt((await env.STATE.get(attKey)) || "0", 10);
     if (att >= 2) {
       await env.DB.prepare("UPDATE files SET text = ?, doc_type = 'meeting' WHERE id = ?").bind("[받아쓰기 실패]", row.id).run();
-      await sendMessage(env, chatId, "받아쓰기에 반복 실패했습니다. 녹음이 너무 길거나 음질/형식 문제일 수 있어요. 10분 이내로 나눠 다시 보내주세요. (원본은 저장돼 있습니다)");
+      await sendMessage(env, minutesTargetChat(env, chatId), "받아쓰기에 반복 실패했습니다. 10분 내외로 나눠 다시 보내주세요. (원본은 저장돼 있습니다)");
       return;
     }
     await env.STATE.put(attKey, String(att + 1), { expirationTtl: 86400 });
 
-    // R2에서 원본 로드.
+    // R2에서 원본 로드 후 제출
     let audioBuf;
     try {
       const obj = await env.R2.get(row.r2_key);
-      if (!obj) {
-        await env.DB.prepare("UPDATE files SET text = ?, doc_type = 'meeting' WHERE id = ?").bind("[받아쓰기 실패: 원본 없음]", row.id).run();
-        return;
-      }
+      if (!obj) throw new Error("R2 object missing");
       audioBuf = await obj.arrayBuffer();
     } catch (e) {
-      console.error("voice queue R2 load error", row.id, e && e.message);
-      return; // 다음 분에 재시도
+      console.error("voice R2 load error", row.id, e && e.message);
+      return;
     }
 
-    // STT — Cron 이라 넉넉한 타임아웃 사용.
-    let transcript = "";
-    let timedTranscript = "";
+    // AssemblyAI 제출(키 있으면). 없으면 기존 OpenAI 동기 전사로 폴백(짧은 녹음).
+    if (env.ASSEMBLYAI_API_KEY) {
+      try {
+        const tid = await submitAssemblyAI(env, audioBuf);
+        await env.DB.prepare("UPDATE files SET aai_id = ?, aai_polls = 0 WHERE id = ?").bind(tid, row.id).run();
+        await sendMessage(env, minutesTargetChat(env, chatId), "🎙 녹음을 받았습니다. 받아쓰는 중이며 회의록이 자동으로 도착합니다. (긴 녹음일수록 조금 더 걸려요)");
+      } catch (e) {
+        console.error("AAI submit error", row.id, e && e.message);
+        // 제출 실패 → 다음 틱 재시도(att로 제한)
+      }
+      return;
+    }
+
+    // OpenAI 폴백(키 없을 때, 짧은 녹음만 현실적)
+    let transcript = "", timedTranscript = "";
     try {
-      const tr = await transcribe(env, audioBuf, row.filename, 280000); // Cron은 시간 여유 큼 → 긴 녹음 대비
+      const tr = await transcribe(env, audioBuf, row.filename, 240000);
       transcript = (tr.plain || "").trim();
       timedTranscript = (tr.timed || "").trim();
     } catch (e) {
       console.error("voice queue STT error", row.id, e && e.message);
-      return; // att 증가됨 → 다음 분 재시도, 2회 후 실패 처리
+      return;
     }
     if (!transcript) return;
-
-    // 전사만 저장하고 회의록 생성(LLM)은 다음 Cron 틱으로 분리한다.
-    // STT(긴 시간) + 회의록 LLM 을 한 실행에 붙이면 무료 플랜 실행시간을 넘겨
-    // 전사는 저장됐는데 회의록은 안 나가는 일이 생긴다. → STT 틱 / 회의록 틱 분리.
-    try {
-      await env.DB.prepare("UPDATE files SET text = ?, timed_text = ?, doc_type = 'meeting' WHERE id = ?")
-        .bind(transcript.slice(0, 16000), (timedTranscript || "").slice(0, 16000), row.id).run();
-    } catch (e) { console.error("voice queue save error", row.id, e && e.message); }
-
-    const targetChatId = minutesTargetChat(env, chatId);
-    // 짧은 녹음(전사 30초 내 완료)은 같은 틱에서 회의록까지 → short 도착 60초+ 단축.
-    // 전사가 오래 걸린 긴 녹음은 실행시간 초과 위험 → 다음 틱으로 분리(기존 안전 동작).
-    const elapsedMs = Date.now() - tickStart;
-    if (elapsedMs < 30000) {
-      try {
-        await generateMinutes(env, String(chatId)); // 같은 틱에서 회의록 생성·전송
-      } catch (e) {
-        console.error("inline minutes failed → queue fallback", row.id, e && e.message);
-        await qPush(env, "mj", String(chatId), true);
-        await sendMessage(env, targetChatId, "🎙 받아쓰기 완료. 회의록을 작성 중입니다… 잠시 후 도착합니다.");
-      }
-    } else {
-      await qPush(env, "mj", String(chatId), true); // 긴 녹음: 다음 틱
-      await sendMessage(env, targetChatId, "🎙 받아쓰기 완료. 회의록을 작성 중입니다… 잠시 후 도착합니다.");
-    }
+    await env.DB.prepare("UPDATE files SET text = ?, timed_text = ?, doc_type = 'meeting' WHERE id = ?")
+      .bind(transcript.slice(0, 16000), timedTranscript.slice(0, 16000), row.id).run();
+    await qPush(env, "mj", String(chatId), true);
+    await sendMessage(env, minutesTargetChat(env, chatId), "🎙 받아쓰기 완료. 회의록을 작성 중입니다… 잠시 후 도착합니다.");
   } finally {
     await env.STATE.delete("vq:lock");
   }
