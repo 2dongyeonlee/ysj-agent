@@ -5,11 +5,11 @@ import { enqueueDocumentSummary, runDocumentSummaryQueue, summarizeFile, summari
 import { handleQA } from "./qa.js";
 import { runInfoBriefing } from "./info.js";
 import { runProjectBriefing } from "./project.js";
-import { handleVoice, makeMinutesFromStored, regenerateMinutesWithMeta, runVoiceQueue, summarizeRecentMessages, runTextMinutesQueue, summarizeMessageBlock, summarizeMessagesUpTo } from "./voice.js";
+import { handleVoice, makeMinutesFromStored, runVoiceQueue, summarizeRecentMessages, runTextMinutesQueue, summarizeMessageBlock, summarizeMessagesUpTo } from "./voice.js";
 import { classifyIntent } from "./intent.js";
 import { sendMessage, sendDocument, sendDocumentBytes } from "./telegram.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
-import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks, checkInsights, dedupInsights, getResummaryTargets, updateInsightSummary, qLen } from "./db.js";
+import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks, checkInsights, dedupInsights, getResummaryTargets, updateInsightSummary, qLen, qPush } from "./db.js";
 import { resummarizeText } from "./insight.js";
 import { splitBriefingSections } from "./collect.js";
 import { runReclass } from "./reclass.js";
@@ -165,7 +165,11 @@ async function route(env, msg) {
   const mctx = await env.STATE.get("mctx:" + chatId);
   if (mctx && text && !text.startsWith("/") && /\d|참석|안건|명단|날짜/.test(text)) {
     await env.STATE.delete("mctx:" + chatId);
-    return regenerateMinutesWithMeta(env, chatId, mctx, text);
+    // 웹훅에서 LLM을 직접 호출하면 무료 플랜 실행시간 초과로 무응답이 된다.
+    // 메타를 저장하고 큐에 넣어 Cron(generateMinutes)이 재작성하도록 분리한다.
+    await env.STATE.put("rmeta:" + chatId, JSON.stringify({ fileId: String(mctx), meta: String(text) }), { expirationTtl: 900 });
+    await qPush(env, "mj", String(chatId), true);
+    return sendMessage(env, chatId, "메타 정보를 반영해 회의록을 다시 작성 중입니다… 잠시 후 도착합니다.");
   }
 
   // ---- commands (ASCII only). arg = text after the command ----

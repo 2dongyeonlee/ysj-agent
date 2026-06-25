@@ -640,6 +640,18 @@ export async function makeMinutesFromStored(env, chatId) {
 
 // Cron 이 호출 — 저장된 전사로 회의록을 생성해 전송.
 export async function generateMinutes(env, chatId) {
+  // 보강 메타가 대기 중이면 메타 반영 재작성을 우선 처리(웹훅 대신 Cron에서 LLM 실행).
+  const rmetaRaw = await env.STATE.get("rmeta:" + chatId);
+  if (rmetaRaw) {
+    await env.STATE.delete("rmeta:" + chatId);
+    try {
+      const { fileId, meta } = JSON.parse(rmetaRaw);
+      return await regenerateMinutesWithMeta(env, chatId, fileId, meta);
+    } catch (e) {
+      console.error("generateMinutes rmeta parse error", e && e.message);
+      // 파싱 실패 시 일반 회의록 생성으로 폴백(아래 진행)
+    }
+  }
   const row = await latestMeeting(env, chatId);
   if (!row || !row.text) {
     return sendMessage(env, chatId, "최근 받아쓰기를 찾지 못했습니다. 녹음을 먼저 보내주세요.");
