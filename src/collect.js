@@ -1,5 +1,5 @@
 // collect.js — silently collect messages/files. entry for briefing/search/extract.
-import { saveMessage, saveFile, priorIdenticalMessage } from "./db.js";
+import { saveMessage, saveFile, priorIdenticalMessage, qPush, qShift } from "./db.js";
 import { senderName, senderId } from "./telegram.js";
 import { sinceDaysIso } from "./utils.js";
 import { maybeExtractEngagement } from "./extract.js";
@@ -112,58 +112,13 @@ export async function collectMessage(env, msg) {
     /\.(ogg|oga|mp3|m4a|wav|aac|opus|flac|amr)$/i.test(msg.document.file_name || "")
   );
 
-  // file: R2 upload + text extract + insight + sender
+  // file: 빠른 접수만 — R2 업로드 + files 행 생성. 무거운 파싱/LLM은 Cron(runFileProcessQueue)로.
   if (!isAudioDoc && (msg.document || (msg.photo && msg.photo.length))) {
     const isPhoto = !msg.document && !!(msg.photo && msg.photo.length);
-    const fileId = msg.document
-      ? msg.document.file_id
-      : msg.photo[msg.photo.length - 1].file_id;
+    const fileId = msg.document ? msg.document.file_id : msg.photo[msg.photo.length - 1].file_id;
     const filename = (msg.document && msg.document.file_name) || "image.jpg";
 
-    // 1) 텍스트 추출 (PDF/이미지 → Claude Vision/PDF 파서) — 전체 보존
-    let extracted = "";
-    try {
-      extracted = await extractText(env, msg);
-    } catch (e) {
-      console.error("extractText isolated error", e && e.message);
-    }
-
-    // 2) insight 추출 (분류/프로젝트/일정/요약) — R2 키 분류 근거
-    let meta = { category: "", project: "", filename, sender, isPhoto };
-    try {
-      if (extracted && extracted.length >= 10) {
-        const ins = await extractInsight(env, {
-          chatId: msg.chat.id,
-          sourceType: "file",
-          sourceRef: fileId,
-          text: extracted,
-          sender,
-          caption: msg.caption || "",
-          filename,
-          receivedAt: msg.date ? new Date(msg.date * 1000) : new Date(),
-        });
-        if (ins && typeof ins === "object") {
-          meta.category = ins.category || "";
-          meta.project = ins.project || "";
-        }
-      }
-    } catch (e) {
-      console.error("file extractInsight isolated error", e && e.message);
-    }
-
-    // 캡션 #해시태그는 분류 최우선 — 텍스트추출 실패·사진이어도 지정 폴더로 보장.
-    try {
-      const kws = await loadProjectKeywords(env);
-      const tagProj = captionProject(kws, msg.caption || "");
-      if (tagProj) { meta.project = tagProj; meta.category = ""; }
-    } catch (e) {
-      console.error("captionProject isolated error", e && e.message);
-    }
-
-    // 사진·무제 파일은 추출 텍스트에서 제목 뽑아 키에 사용
-    if (isPhoto || !msg.document) meta.titleGuess = titleFromText(extracted);
-
-    // 3) R2 업로드
+    // R2 업로드 (원본 보존) — 텍스트 추출/insight 없이 빠르게.
     let r2Key = "";
     try {
       const url = await getFileUrlPublic(env, fileId);
@@ -171,30 +126,29 @@ export async function collectMessage(env, msg) {
         const fileRes = await fetch(url);
         if (fileRes.ok) {
           const data = await fileRes.arrayBuffer();
-          r2Key = buildR2Key(meta);
-          await env.R2.put(r2Key, data, {
-            customMetadata: {
-              category: meta.category || "",
-              project: meta.project || "",
-              sender: sender || "",
-              filename,
-            },
-          });
+          r2Key = buildR2Key({ category: "", project: "", filename, sender, isPhoto });
+          await env.R2.put(r2Key, data, { customMetadata: { category: "", project: "", sender: sender || "", filename } });
         }
       }
-    } catch (e) {
-      console.error("R2 upload isolated error", e && e.message);
-    }
+    } catch (e) { console.error("R2 upload isolated error", e && e.message); }
 
-    // 4) D1 files 저장 — r2_key + 추출 전체 텍스트(파싱 보존) + sender
+    // files 행 생성: text 비움(='') + process_status='pending'. Cron이 채운다.
     await saveFile(env, {
       chat_id: msg.chat.id,
       file_id: fileId,
       r2_key: r2Key,
       filename,
-      text: extracted || "",   // ← 요약이 아니라 전체 추출본 저장 (검색·재활용)
+      text: "",
       sender,
     });
+    try {
+      await env.DB.prepare("UPDATE files SET process_status='pending' WHERE file_id=? AND chat_id=?")
+        .bind(fileId, String(msg.chat.id)).run();
+    } catch (e) { console.error("file pending mark error", e && e.message); }
+    // 무거운 처리 큐에 적재 (chatId, fileId, isPhoto, caption)
+    try {
+      await qPush(env, "fp", { chatId: String(msg.chat.id), fileId: fileId, isPhoto: isPhoto, caption: msg.caption || "", filename: filename, sender: sender });
+    } catch (e) { console.error("fp queue push error", e && e.message); }
   }
 
   if (text) {
@@ -252,4 +206,44 @@ export async function collectMessage(env, msg) {
       }
     }
   }
+}
+
+// Cron 호출 — 대기 중인 파일 1건의 텍스트 추출 + insight + 분류 갱신.
+export async function runFileProcessQueue(env) {
+  let job;
+  try { job = await qShift(env, "fp"); } catch (e) { console.error("fp shift error", e && e.message); return; }
+  if (!job || !job.fileId) return;
+  const { chatId, fileId, isPhoto, caption, filename, sender } = job;
+
+  // 원본 메시지 객체가 없으므로, extractText가 file_id 기반으로 동작하도록 최소 msg 구성.
+  let extracted = "";
+  try {
+    const pseudoMsg = isPhoto
+      ? { photo: [{ file_id: fileId }], caption }
+      : { document: { file_id: fileId, file_name: filename }, caption };
+    extracted = await extractText(env, pseudoMsg);
+  } catch (e) { console.error("fp extractText error", fileId, e && e.message); }
+
+  let category = "", project = "";
+  try {
+    if (extracted && extracted.length >= 10) {
+      const ins = await extractInsight(env, {
+        chatId, sourceType: "file", sourceRef: fileId, text: extracted,
+        sender: sender || "", caption: caption || "", filename: filename || "",
+        receivedAt: new Date(),
+      });
+      if (ins && typeof ins === "object") { category = ins.category || ""; project = ins.project || ""; }
+    }
+  } catch (e) { console.error("fp extractInsight error", fileId, e && e.message); }
+
+  try {
+    const kws = await loadProjectKeywords(env);
+    const tagProj = captionProject(kws, caption || "");
+    if (tagProj) { project = tagProj; category = ""; }
+  } catch (e) { console.error("fp captionProject error", e && e.message); }
+
+  try {
+    await env.DB.prepare("UPDATE files SET text=?, process_status='done' WHERE file_id=? AND chat_id=?")
+      .bind((extracted || "").slice(0, 16000), fileId, String(chatId)).run();
+  } catch (e) { console.error("fp save error", fileId, e && e.message); }
 }

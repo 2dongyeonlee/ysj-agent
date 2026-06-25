@@ -1,5 +1,5 @@
 // index.js — entry point. routing only. Bot stays silent unless explicitly called.
-import { collectMessage } from "./collect.js";
+import { collectMessage, runFileProcessQueue } from "./collect.js";
 import { runMorningBriefing, runBrief } from "./briefing.js";
 import { enqueueDocumentSummary, runDocumentSummaryQueue, summarizeFile, summarizeLatest, smartReplyRequest } from "./summarize.js";
 import { handleQA } from "./qa.js";
@@ -134,6 +134,7 @@ export default {
           runVoiceQueue(env).catch(function (e) { console.error("voice queue error", (e && e.stack) || e); }),
           runTextMinutesQueue(env).catch(function (e) { console.error("text minutes queue error", (e && e.stack) || e); }),
           runDocumentSummaryQueue(env).catch(function (e) { console.error("doc summary queue error", (e && e.stack) || e); }),
+          runFileProcessQueue(env).catch(function (e) { console.error("file process queue error", (e && e.stack) || e); }),
         ]);
       })());
       return;
