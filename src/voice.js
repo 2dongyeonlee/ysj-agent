@@ -306,6 +306,7 @@ function minutesTargetChat(env, fallbackChatId) {
 export async function runVoiceQueue(env) {
   if (await env.STATE.get("vq:lock")) return; // 이미 처리 중
   await env.STATE.put("vq:lock", "1", { expirationTtl: 300 });
+  const tickStart = Date.now(); // 전사 소요시간 측정용(짧은 녹음 inline 판단)
   try {
     // 1) 회의록 작성 대기 작업 우선 처리(사용자가 기다리는 중). 한 번에 1건.
     const mjChat = await qShift(env, "mj");
@@ -377,9 +378,22 @@ export async function runVoiceQueue(env) {
         .bind(transcript.slice(0, 16000), (timedTranscript || "").slice(0, 16000), row.id).run();
     } catch (e) { console.error("voice queue save error", row.id, e && e.message); }
 
-    await qPush(env, "mj", String(chatId), true); // 다음 틱(generateMinutes)이 회의록 생성·전송
     const targetChatId = minutesTargetChat(env, chatId);
-    await sendMessage(env, targetChatId, "🎙 받아쓰기 완료. 회의록을 작성 중입니다… 잠시 후 도착합니다.");
+    // 짧은 녹음(전사 30초 내 완료)은 같은 틱에서 회의록까지 → short 도착 60초+ 단축.
+    // 전사가 오래 걸린 긴 녹음은 실행시간 초과 위험 → 다음 틱으로 분리(기존 안전 동작).
+    const elapsedMs = Date.now() - tickStart;
+    if (elapsedMs < 30000) {
+      try {
+        await generateMinutes(env, String(chatId)); // 같은 틱에서 회의록 생성·전송
+      } catch (e) {
+        console.error("inline minutes failed → queue fallback", row.id, e && e.message);
+        await qPush(env, "mj", String(chatId), true);
+        await sendMessage(env, targetChatId, "🎙 받아쓰기 완료. 회의록을 작성 중입니다… 잠시 후 도착합니다.");
+      }
+    } else {
+      await qPush(env, "mj", String(chatId), true); // 긴 녹음: 다음 틱
+      await sendMessage(env, targetChatId, "🎙 받아쓰기 완료. 회의록을 작성 중입니다… 잠시 후 도착합니다.");
+    }
   } finally {
     await env.STATE.delete("vq:lock");
   }
