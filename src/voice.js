@@ -177,6 +177,11 @@ const MEETING_JSON_SYSTEM = PERSONA_STYLE + "\n\n" +
   "- 임원이 사장에게 올리는 보고용 회의록이다. 발화 복원·중복·군더더기 금지, 결론 중심으로 간결히.\n" +
   "- 이모지·마크다운(**, ##)·표 금지. HTML <b>만 사용. 헤더는 ■ <b>제목</b> 형식. 구분선은 ━━━━━━━━━━━━━━━━━━ 만.\n" +
   "- 추측 금지. 자료에 없으면 항목을 비우고, 핵심에 영향 주는 미결만 '미결:'로 1줄.\n\n" +
+  "[화자분리 원칙]\n" +
+  "- 입력에 'A:', 'B:', 'Speaker 1:', '화자1:' 같은 라벨이 있으면 실제 이름이 아니라 화자 구분 단서로만 사용한다.\n" +
+  "- 화자 라벨을 그대로 나열하지 말고, 의견 대립·합의·결정 흐름을 복원하는 근거로 써라.\n" +
+  "- 맥락상 역할이 분명할 때만 역할을 적고, 불명확하면 '발언자 A'처럼 자연스럽게 표기한다.\n" +
+  "- 회의록은 전사문이 아니라 결정·미결·후속조치 중심 보고서다.\n\n" +
   "[short 규칙] 텔레그램 즉시 표시용. 사장이 30초 내 읽을 분량. '요약'이라는 단어를 쓰지 않는다.\n" +
   "형식(이 순서 고정):\n" +
   "[회의 제목]\n" +
@@ -352,9 +357,11 @@ export async function runVoiceQueue(env) {
 
     // STT — Cron 이라 넉넉한 타임아웃 사용.
     let transcript = "";
+    let timedTranscript = "";
     try {
       const tr = await transcribe(env, audioBuf, row.filename, 280000); // Cron은 시간 여유 큼 → 긴 녹음 대비
       transcript = (tr.plain || "").trim();
+      timedTranscript = (tr.timed || "").trim();
     } catch (e) {
       console.error("voice queue STT error", row.id, e && e.message);
       return; // att 증가됨 → 다음 분 재시도, 2회 후 실패 처리
@@ -365,8 +372,8 @@ export async function runVoiceQueue(env) {
     // STT(긴 시간) + 회의록 LLM 을 한 실행에 붙이면 무료 플랜 실행시간을 넘겨
     // 전사는 저장됐는데 회의록은 안 나가는 일이 생긴다. → STT 틱 / 회의록 틱 분리.
     try {
-      await env.DB.prepare("UPDATE files SET text = ?, doc_type = 'meeting' WHERE id = ?")
-        .bind(transcript.slice(0, 16000), row.id).run();
+      await env.DB.prepare("UPDATE files SET text = ?, timed_text = ?, doc_type = 'meeting' WHERE id = ?")
+        .bind(transcript.slice(0, 16000), (timedTranscript || "").slice(0, 16000), row.id).run();
     } catch (e) { console.error("voice queue save error", row.id, e && e.message); }
 
     await qPush(env, "mj", String(chatId), true); // 다음 틱(generateMinutes)이 회의록 생성·전송
@@ -576,7 +583,7 @@ async function saveMeetingInsight(env, row) {
 async function latestMeeting(env, chatId) {
   try {
     return await env.DB.prepare(
-      "SELECT id, file_id, filename, text, full_minutes, " +
+      "SELECT id, file_id, filename, text, timed_text, full_minutes, " +
       "(SELECT summary FROM insights i WHERE i.source_type = 'voice' AND i.source_ref = files.file_id ORDER BY id DESC LIMIT 1) AS summary " +
       "FROM files WHERE chat_id = ? AND text != '' AND text NOT LIKE '[받아쓰기 실패%' " +
       "AND (doc_type = 'meeting' OR filename LIKE '%.m4a' OR filename LIKE '%.ogg' OR filename LIKE '%.oga' " +
@@ -622,7 +629,8 @@ export async function generateMinutes(env, chatId) {
   }
   try {
     if (row.full_minutes) return sendMessage(env, chatId, await withMetaFollowup(env, chatId, row.file_id, row.full_minutes));
-    const minutes = await createMeetingMinutes(env, row.text);
+    const sourceText = row.timed_text || row.text;
+    const minutes = await createMeetingMinutes(env, sourceText);
     await env.DB.prepare("UPDATE files SET doc_type = 'meeting', full_minutes = ? WHERE id = ?")
       .bind(minutes.full || null, row.id).run();
     try {
