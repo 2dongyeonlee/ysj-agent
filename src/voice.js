@@ -117,6 +117,58 @@ async function transcribeAssemblyAI(env, audioBuf, filename, timeoutMs) {
   throw new Error("AssemblyAI STT timeout");
 }
 
+// AssemblyAI 전사 제출(업로드+요청)만. 폴링하지 않고 transcript_id 반환.
+async function submitAssemblyAI(env, audioBuf) {
+  const apiKey = env.ASSEMBLYAI_API_KEY;
+  if (!apiKey) throw new Error("ASSEMBLYAI_API_KEY missing");
+
+  const uploadRes = await fetch("https://api.assemblyai.com/v2/upload", {
+    method: "POST",
+    headers: { authorization: apiKey },
+    body: audioBuf,
+  });
+  if (!uploadRes.ok) throw new Error("AAI upload " + uploadRes.status + ": " + (await uploadRes.text()).slice(0, 200));
+  const audioUrl = (await uploadRes.json()).upload_url;
+  if (!audioUrl) throw new Error("AAI upload_url missing");
+
+  const createRes = await fetch("https://api.assemblyai.com/v2/transcript", {
+    method: "POST",
+    headers: { authorization: apiKey, "content-type": "application/json" },
+    body: JSON.stringify({
+      audio_url: audioUrl,
+      language_code: "ko",
+      speaker_labels: true,
+      keyterms_prompt: KOREAN_KEYTERMS,
+    }),
+  });
+  if (!createRes.ok) throw new Error("AAI create " + createRes.status + ": " + (await createRes.text()).slice(0, 200));
+  const id = (await createRes.json()).id;
+  if (!id) throw new Error("AAI transcript id missing");
+  return id;
+}
+
+// AssemblyAI 전사 1회 폴링. 반환 { status, plain, timed }.
+// status: "completed" | "processing" | "queued" | "error"
+async function pollAssemblyAI(env, transcriptId) {
+  const apiKey = env.ASSEMBLYAI_API_KEY;
+  const res = await fetch("https://api.assemblyai.com/v2/transcript/" + encodeURIComponent(transcriptId), {
+    headers: { authorization: apiKey },
+  });
+  if (!res.ok) return { status: "processing" }; // 일시 오류는 다음 틱 재시도
+  const data = await res.json();
+  if (data.status === "completed") {
+    const plain = String(data.text || "").trim();
+    const utterances = Array.isArray(data.utterances) ? data.utterances : [];
+    const timed = utterances
+      .map(function (u) { return String(u.speaker || "?") + ": " + String(u.text || "").trim(); })
+      .filter(function (line) { return line.replace(/^.: /, "").trim(); })
+      .join("\n");
+    return { status: "completed", plain, timed: timed || plain };
+  }
+  if (data.status === "error") return { status: "error", error: data.error || "unknown" };
+  return { status: data.status || "processing" };
+}
+
 // STT. timeoutMs 로 모델별 제한시간을 조절(큐는 넉넉히, 웹훅은 짧게).
 async function transcribe(env, audioBuf, filename, timeoutMs) {
   const t = timeoutMs || 24000;
