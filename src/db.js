@@ -1,4 +1,5 @@
 // db.js — D1 쿼리만 담당. SQL 은 전부 여기 모은다.
+import { NAME_ALIASES } from "./people.js";
 
 // ===== 메시지 (브리핑·검색 원천) =====
 export async function saveMessage(env, m) {
@@ -34,6 +35,40 @@ export async function searchMessages(env, keyword) {
      WHERE text LIKE ? ORDER BY created_at DESC LIMIT 20`
   ).bind(`%${keyword}%`).all();
   return results || [];
+}
+
+export async function searchBySender(env, query) {
+  const pat = /^(.+?)\s*(TL|팀장|담당|씨|님|이|가|은|는)?\s*(보고한|공유한|공유해준|말한|언급한|올린|전달한|작성한|보낸|이야기한)/;
+  const m = String(query || "").match(pat);
+  if (!m) return null;
+
+  // 시간어 + 끝 호칭 제거 → 순수 이름
+  const nameRaw = m[1]
+    .replace(/(어제|오늘|이번주|최근|아까)\s*/g, "")
+    .replace(/\s*(담당|팀장|TL|사장|님|씨)$/g, "")
+    .trim();
+  if (nameRaw.length < 2) return null;
+
+  const aliases = Object.entries(NAME_ALIASES).find(([full, list]) =>
+    full.includes(nameRaw) || list.some(a => a.includes(nameRaw) || nameRaw.includes(a))
+  );
+  if (!aliases) return null;
+
+  const [, aliasList] = aliases;
+  const likes = aliasList.map(() => "sender LIKE ?").join(" OR ");
+  const binds = aliasList.map(a => `%${a}%`);
+
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT chat_id, sender, text, created_at FROM messages
+       WHERE (${likes}) AND length(text) >= 5
+       ORDER BY created_at DESC LIMIT 10`
+    ).bind(...binds).all();
+    return (results && results.length) ? results : null;
+  } catch (e) {
+    console.error("searchBySender error:", e.message);
+    return null;
+  }
 }
 
 // ===== 파일 (기능2: 자료 전달) =====
