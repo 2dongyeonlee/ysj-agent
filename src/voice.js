@@ -431,7 +431,7 @@ export async function createMeetingMinutes(env, transcript) {
     "받아쓰기 전문:\n" + String(transcript || "").slice(0, 16000),
     MEETING_JSON_SYSTEM,
     MODEL_SMART,
-    2800
+    3600
   );
   let parsed;
   try {
@@ -632,12 +632,14 @@ export async function generateMinutes(env, chatId) {
     if (row.full_minutes) return sendMessage(env, chatId, await withMetaFollowup(env, chatId, row.file_id, row.full_minutes));
     const sourceText = row.timed_text || row.text;
     const minutes = await createMeetingMinutes(env, sourceText);
+    // full이 비면 short로 승격(JSON 잘림 등으로 full 누락 시 null 저장 방지)
+    const fullToSave = minutes.full || minutes.short || null;
     await env.DB.prepare("UPDATE files SET doc_type = 'meeting', full_minutes = ? WHERE id = ?")
-      .bind(minutes.full || null, row.id).run();
+      .bind(fullToSave, row.id).run();
     try {
       await saveMeetingInsight(env, { chatId, sourceRef: row.file_id, summary: minutes.short, sender: row.sender || "", inputChars: String(row.text || "").length });
     } catch (e) { console.error("generateMinutes saveMeetingInsight error", e && e.message); }
-    const out = await withMetaFollowup(env, chatId, row.file_id, minutes.full || minutes.short);
+    const out = await withMetaFollowup(env, chatId, row.file_id, fullToSave || minutes.short);
     await sendMessage(env, chatId, out);
   } catch (e) {
     console.error("generateMinutes error", e && (e.stack || e.message));
