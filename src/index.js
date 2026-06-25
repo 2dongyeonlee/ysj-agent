@@ -1,12 +1,11 @@
 // index.js — entry point. routing only. Bot stays silent unless explicitly called.
 import { collectMessage } from "./collect.js";
 import { runMorningBriefing, runBrief } from "./briefing.js";
-import { enqueueDocumentSummary, runDocumentSummaryQueue, summarizeFile, summarizeLatest, smartReplyRequest, searchAndSummarize } from "./summarize.js";
+import { enqueueDocumentSummary, runDocumentSummaryQueue, summarizeFile, summarizeLatest, smartReplyRequest } from "./summarize.js";
 import { handleQA } from "./qa.js";
 import { runInfoBriefing } from "./info.js";
 import { runProjectBriefing } from "./project.js";
 import { handleVoice, makeMinutesFromStored, runVoiceQueue, summarizeRecentMessages, runTextMinutesQueue, summarizeMessageBlock, summarizeMessagesUpTo } from "./voice.js";
-import { classifyIntent } from "./intent.js";
 import { sendMessage, sendDocument, sendDocumentBytes } from "./telegram.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks, checkInsights, dedupInsights, getResummaryTargets, updateInsightSummary, qLen, qPush } from "./db.js";
@@ -571,29 +570,13 @@ async function route(env, msg) {
   // so answers are identical in quality. Group: only when mentioned. 1:1: always.
   const cleanText = text;
   if ((isDM && text) || isMentioned) {
-    // 발신자/날짜 기준 자료 검색 요약: "손경배 담당 오늘 공유자료 요약"
-    if (!msg.reply_to_message && /(자료|공유자료|문서).*(요약|정리|보여)/.test(cleanText)) {
-      const done = await searchAndSummarize(env, chatId, cleanText);
-      if (done) return;
-    }
-    // 텍스트 메시지 reply + 자유 지시 → 카테고리 분류 우회, 지시대로 처리(+관련자료)
-    if (msg.reply_to_message && (msg.reply_to_message.text || msg.reply_to_message.caption) && cleanText && cleanText.length >= 2) {
-      return smartReplyRequest(env, chatId, msg.reply_to_message, cleanText);
-    }
-    const { intent, target } = await classifyIntent(env, cleanText);
-    switch (intent) {
-      case "summary":
-        if (repliedAudio) return handleVoice(env, chatId, msg.reply_to_message, true);
-        return summarizeLatest(env, chatId, target);
-      case "project":  return runProjectBriefing(env, chatId, 7, target);
-      case "decision": return runBrief(env, chatId);
-      case "info":     return runInfoBriefing(env, chatId, 2);
-      case "brief":    return runBrief(env, chatId);
-      case "question": return handleQA(env, chatId, cleanText);
-      default:
-        // mentioned => user explicitly addressed the bot, so answer anyway.
-        if (isMentioned) return handleQA(env, chatId, cleanText);
-        return; // 1:1 + none => silent (info delivery)
+    // 정규식·카테고리 분류 대신 LLM(Haiku)이 의도를 파악해 처리.
+    // reply 있으면 그 대상을 컨텍스트로, 없으면 null.
+    // 5자 미만 짧은 말(ㅇㅋ, 잠깐만 등)은 무시.
+    if (cleanText && cleanText.length >= 5) {
+      const replyCtx = (msg.reply_to_message && (msg.reply_to_message.text || msg.reply_to_message.caption))
+        ? msg.reply_to_message : null;
+      return smartReplyRequest(env, chatId, replyCtx, cleanText);
     }
   }
 }

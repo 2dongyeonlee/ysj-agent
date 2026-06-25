@@ -1,7 +1,7 @@
 // summarize.js - file -> text extraction -> structured summary and insight storage.
 
 import { extractText } from "./docparse.js";
-import { callClaude, MODEL_SMART } from "./claude.js";
+import { callClaude, MODEL_FAST, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 import { loadProjectKeywords, matchProjects, detectDone, detectUrgent, classifyInfoCategory, normalizeProject, parseInfoMeta } from "./insight.js";
@@ -272,9 +272,9 @@ export async function summarizeLatest(env, chatId, keyword) {
 export async function smartReplyRequest(env, chatId, repliedMsg, instruction) {
   // 1) 주 자료 추출 (텍스트 → 문서 → 최근 저장자료 순)
   let source = "";
-  if (repliedMsg.text || repliedMsg.caption) {
+  if (repliedMsg && (repliedMsg.text || repliedMsg.caption)) {
     source = String(repliedMsg.text || repliedMsg.caption).trim();
-  } else if (repliedMsg.document) {
+  } else if (repliedMsg && repliedMsg.document) {
     try { source = await extractText(env, repliedMsg); } catch (e) { console.error("smartReply extract error", e && e.message); }
   }
   if (!source || source.length < 20) {
@@ -310,7 +310,7 @@ export async function smartReplyRequest(env, chatId, repliedMsg, instruction) {
     "\n\n[주 자료]\n" + source.slice(0, 10000) +
     (related ? ("\n\n[참고 자료]\n" + related.slice(0, 2000)) : "");
   try {
-    const out = await callClaude(env, prompt, sys, MODEL_SMART, 2500);
+    const out = await callClaude(env, prompt, sys, MODEL_FAST, 2500);
     return sendMessage(env, chatId, out || "처리에 실패했습니다. 다시 시도해주세요.");
   } catch (e) {
     console.error("smartReplyRequest error", e && (e.stack || e.message));
@@ -341,7 +341,7 @@ export async function searchAndSummarize(env, chatId, text) {
     "■ <b>배경</b> / ■ <b>주요 내용</b> / ■ <b>Action Item</b> / ■ <b>일정</b> / ■ <b>참석/관계자</b>. " +
     "이모지·마크다운 금지, HTML <b>만. 없는 내용 창작 금지.";
   try {
-    const out = await callClaude(env, "자료:\n" + merged, sys, MODEL_SMART, 2500);
+    const out = await callClaude(env, "자료:\n" + merged, sys, MODEL_FAST, 2500);
     await sendMessage(env, chatId, out || "요약에 실패했습니다.");
   } catch (e) {
     console.error("searchAndSummarize llm error", e && (e.stack || e.message));
