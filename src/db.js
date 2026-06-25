@@ -40,37 +40,38 @@ export async function searchMessages(env, keyword) {
 export async function searchBySender(env, query) {
   const pat = /^(.+?)\s*(TL|팀장|담당|씨|님|이|가|은|는)?\s*(보고한|공유한|공유해준|말한|언급한|올린|전달한|작성한|보낸|이야기한)/;
   const m = String(query || "").match(pat);
-  if (!m) return null;
+  if (!m) return null;                          // 발신자 의도 아님 → 폴백
 
   // 시간어 + 끝 호칭 제거 → 순수 이름
   const nameRaw = m[1]
     .replace(/(어제|오늘|이번주|최근|아까)\s*/g, "")
-    .replace(/\s*(담당|팀장|TL|사장|님|씨)$/g, "")
+    .replace(/\s*(담당|팀장|TL|사장|님|씨|이|가|은|는)+\s*$/g, "")   // 끝 호칭·조사 반복 제거
     .trim();
   if (nameRaw.length < 2) return null;
 
   const aliases = Object.entries(NAME_ALIASES).find(([full, list]) =>
     full.includes(nameRaw) || list.some(a => a.includes(nameRaw) || nameRaw.includes(a))
   );
-  if (!aliases) return null;
+  if (!aliases) return null;                     // 명단에 없는 사람 → 폴백
 
-  const [, aliasList] = aliases;
+  const [full, aliasList] = aliases;
   const likes = aliasList.map(() => "sender LIKE ?").join(" OR ");
   const binds = aliasList.map(a => `%${a}%`);
+  const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 19).replace("T", " ");   // 최근 24시간
 
   try {
     const { results } = await env.DB.prepare(
       `SELECT sender, text, created_at, '' AS filename FROM messages
-        WHERE (${likes}) AND length(text) >= 5
+        WHERE (${likes}) AND length(text) >= 5 AND created_at >= ?
        UNION ALL
        SELECT sender, text, created_at, filename FROM files
-        WHERE (${likes}) AND text != ''
+        WHERE (${likes}) AND text != '' AND created_at >= ?
        ORDER BY created_at DESC LIMIT 10`
-    ).bind(...binds, ...binds).all();
-    return (results && results.length) ? results : null;
+    ).bind(...binds, since, ...binds, since).all();
+    return { name: full, rows: results || [] };   // 패턴 맞으면 항상 객체(빈 배열 가능)
   } catch (e) {
     console.error("searchBySender error:", e.message);
-    return null;
+    return { name: full, rows: [] };
   }
 }
 

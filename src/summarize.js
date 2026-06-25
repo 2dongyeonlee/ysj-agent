@@ -269,8 +269,13 @@ export async function summarizeLatest(env, chatId, keyword) {
 }
 
 export async function handleSenderQuery(env, chatId, query) {
-  const rows = await searchBySender(env, query);
-  if (!rows || !rows.length) return false;   // 폴백 신호
+  const found = await searchBySender(env, query);
+  if (!found) return false;   // 폴백 신호
+  const rows = found.rows || [];
+  if (!rows.length) {
+    await sendMessage(env, chatId, `${found.name} 님이 최근 24시간 안에 공유·전달한 자료를 찾지 못했습니다.`);
+    return true;
+  }
   const ctx = rows.map(r =>
     (r.filename ? `[파일:${r.filename}] ` : "") + `${r.sender}: ${r.text}`
   ).join("\n");
