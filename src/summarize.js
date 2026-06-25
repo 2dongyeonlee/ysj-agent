@@ -269,11 +269,16 @@ export async function summarizeLatest(env, chatId, keyword) {
 }
 
 export async function handleSenderQuery(env, chatId, query) {
-  const hit = await searchBySender(env, query);
-  if (!hit) return false;                         // 발신자 의도 아님 → smartReplyRequest로 폴백
+  let hit = await searchBySender(env, query);
+  if (!hit) return false;                         // 발신자 의도 아님 → smartReplyRequest 폴백
 
-  if (!hit.rows.length) {                         // 발신자는 맞음 + 24h 내 자료 0 → 회의록 끌어오기 차단
-    await sendMessage(env, chatId, `${hit.name}님이 최근 24시간 내 공유한 내용이 없습니다.`);
+  let note = "";
+  if (hit.ranged && !hit.rows.length) {           // 기간 내 0건 → 가장 최근 공유분
+    hit = await searchBySender(env, query, { noDate: true });
+    note = "해당 기간 공유 내용이 없어 가장 최근 공유분을 보여드립니다.\n\n";
+  }
+  if (!hit || !hit.rows.length) {
+    await sendMessage(env, chatId, `${(hit && hit.name) || "해당 인물"}님이 공유한 내용을 찾지 못했습니다.`);
     return true;
   }
 
@@ -282,16 +287,15 @@ export async function handleSenderQuery(env, chatId, query) {
   ).join("\n");
 
   const sys = PERSONA_STYLE + "\n\n" +
-    "특정 인물이 최근 24시간 공유·전달한 내용을 정리하라. 단순 나열 요약이 아니라, " +
-    "끝에 '사장 시사점' 1줄을 붙인다 — 염성진 사장이 상위(회장·그룹)에 보고할 때 쓸 멘트 관점으로, " +
-    "이 내용의 의미·대응 포인트를 한 문장. " +
+    "특정 인물이 공유·전달한 내용을 정리하라. 단순 나열 요약이 아니라, 끝에 '사장 시사점' 1줄을 붙인다 — " +
+    "염성진 사장이 상위(회장·그룹)에 보고할 때 쓸 멘트 관점으로 의미·대응 포인트를 한 문장. " +
     "이모지·마크다운 금지, HTML <b>만. 자료에 없는 내용은 지어내지 말 것.\n" +
     "형식: ■ <b>핵심</b> / ■ <b>주요 내용</b> / ■ <b>사장 시사점</b>(1줄)";
 
-  const prompt = "[요청]\n" + query + "\n\n[해당 인물 최근 24시간 공유]\n" + ctx.slice(0, 8000);
+  const prompt = "[요청]\n" + query + "\n\n[" + hit.name + " 공유 내용]\n" + ctx.slice(0, 8000);
   try {
     const out = await callClaude(env, prompt, sys, MODEL_FAST, 2000);
-    await sendMessage(env, chatId, out || "요약 실패. 다시 시도해주세요.");
+    await sendMessage(env, chatId, note + (out || "요약 실패. 다시 시도해주세요."));
     return true;
   } catch (e) {
     console.error("handleSenderQuery error:", e && e.message);

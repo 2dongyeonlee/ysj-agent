@@ -37,41 +37,67 @@ export async function searchMessages(env, keyword) {
   return results || [];
 }
 
-export async function searchBySender(env, query) {
+// KST 자정 기준 날짜 범위. Worker(UTC)에서 한국 날짜로 자른다.
+function kstDayStartISO(offsetDays = 0) {
+  const kst = new Date(Date.now() + 9 * 3600 * 1000);
+  kst.setUTCHours(0, 0, 0, 0);
+  kst.setUTCDate(kst.getUTCDate() + offsetDays);
+  return new Date(kst.getTime() - 9 * 3600 * 1000).toISOString();
+}
+
+function dateRangeFromQuery(q) {
+  const s = String(q || "");
+  if (/어제|전일/.test(s)) return { since: kstDayStartISO(-1), until: kstDayStartISO(0) };
+  if (/이번\s*주|금주|이번주/.test(s)) {
+    const kst = new Date(Date.now() + 9 * 3600 * 1000);
+    const dow = (kst.getUTCDay() + 6) % 7;   // 월=0
+    return { since: kstDayStartISO(-dow), until: null };
+  }
+  if (/오늘|금일/.test(s)) return { since: kstDayStartISO(0), until: null };
+  return { since: null, until: null };       // 키워드 없음 → 기간 제한 없음
+}
+
+export async function searchBySender(env, query, opts = {}) {
   const pat = /^(.+?)\s*(TL|팀장|담당|씨|님|이|가|은|는)?\s*(보고한|공유한|공유해준|말한|언급한|올린|전달한|작성한|보낸|이야기한)/;
   const m = String(query || "").match(pat);
-  if (!m) return null;                          // 발신자 의도 아님 → 폴백
+  if (!m) return null;
 
-  // 시간어 + 끝 호칭 제거 → 순수 이름
   const nameRaw = m[1]
-    .replace(/(어제|오늘|이번주|최근|아까)\s*/g, "")
-    .replace(/\s*(담당|팀장|TL|사장|님|씨|이|가|은|는)+\s*$/g, "")   // 끝 호칭·조사 반복 제거
+    .replace(/(어제|오늘|이번주|금주|최근|아까|전일|금일)\s*/g, "")
+    .replace(/\s*(담당|팀장|TL|사장|님|씨|이|가|은|는)+\s*$/g, "")
     .trim();
   if (nameRaw.length < 2) return null;
 
   const aliases = Object.entries(NAME_ALIASES).find(([full, list]) =>
     full.includes(nameRaw) || list.some(a => a.includes(nameRaw) || nameRaw.includes(a))
   );
-  if (!aliases) return null;                     // 명단에 없는 사람 → 폴백
+  if (!aliases) return null;
 
   const [full, aliasList] = aliases;
   const likes = aliasList.map(() => "sender LIKE ?").join(" OR ");
-  const binds = aliasList.map(a => `%${a}%`);
-  const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 19).replace("T", " ");   // 최근 24시간
+  const likeBinds = aliasList.map(a => `%${a}%`);
 
+  const range = opts.noDate ? { since: null, until: null } : dateRangeFromQuery(query);
+  const dateConds = [], dateBinds = [];
+  if (range.since) { dateConds.push("created_at >= datetime(?)"); dateBinds.push(range.since); }
+  if (range.until) { dateConds.push("created_at < datetime(?)");  dateBinds.push(range.until); }
+  const extra = dateConds.length ? " AND " + dateConds.join(" AND ") : "";
+
+  // 한 측(messages/files) 바인드 = likeBinds + dateBinds. UNION이라 두 번 반복.
+  const oneBinds = [...likeBinds, ...dateBinds];
   try {
     const { results } = await env.DB.prepare(
       `SELECT sender, text, created_at, '' AS filename FROM messages
-        WHERE (${likes}) AND length(text) >= 5 AND created_at >= ?
+        WHERE (${likes}) AND length(text) >= 5${extra}
        UNION ALL
        SELECT sender, text, created_at, filename FROM files
-        WHERE (${likes}) AND text != '' AND created_at >= ?
+        WHERE (${likes}) AND text != ''${extra}
        ORDER BY created_at DESC LIMIT 10`
-    ).bind(...binds, since, ...binds, since).all();
-    return { name: full, rows: results || [] };   // 패턴 맞으면 항상 객체(빈 배열 가능)
+    ).bind(...oneBinds, ...oneBinds).all();
+    return { name: full, rows: results || [], ranged: !!range.since };
   } catch (e) {
     console.error("searchBySender error:", e.message);
-    return { name: full, rows: [] };
+    return { name: full, rows: [], ranged: !!range.since };
   }
 }
 
