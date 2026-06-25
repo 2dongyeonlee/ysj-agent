@@ -10,11 +10,15 @@ export async function callClaude(env, userText, system = "", model = MODEL_FAST,
       "content-type": "application/json",
       "x-api-key": env.ANTHROPIC_API_KEY,
       "anthropic-version": "2023-06-01",
+      "anthropic-beta": "prompt-caching-2024-07-31",
     },
     body: JSON.stringify({
       model,
       max_tokens: maxTokens,
-      system: system || undefined,
+      // 시스템 프롬프트를 캐시(반복 호출 시 입력 토큰 90% 할인). 짧으면 자동 미적용.
+      system: system
+        ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
+        : undefined,
       messages: [{ role: "user", content: userText }],
     }),
   });
