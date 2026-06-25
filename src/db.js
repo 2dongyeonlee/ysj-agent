@@ -37,24 +37,29 @@ export async function searchMessages(env, keyword) {
   return results || [];
 }
 
-// KST 자정 기준 날짜 범위. Worker(UTC)에서 한국 날짜로 자른다.
-function kstDayStartISO(offsetDays = 0) {
+// created_at 은 'YYYY-MM-DD HH:MM:SS' (UTC) 로 저장됨 → 같은 형식으로 비교해야 함.
+function toDbTime(date) {
+  return date.toISOString().slice(0, 19).replace("T", " ");
+}
+
+// KST 자정 기준 → UTC → DB 형식 문자열
+function kstDayStartDb(offsetDays = 0) {
   const kst = new Date(Date.now() + 9 * 3600 * 1000);
   kst.setUTCHours(0, 0, 0, 0);
   kst.setUTCDate(kst.getUTCDate() + offsetDays);
-  return new Date(kst.getTime() - 9 * 3600 * 1000).toISOString();
+  return toDbTime(new Date(kst.getTime() - 9 * 3600 * 1000));
 }
 
 function dateRangeFromQuery(q) {
   const s = String(q || "");
-  if (/어제|전일/.test(s)) return { since: kstDayStartISO(-1), until: kstDayStartISO(0) };
+  if (/어제|전일/.test(s)) return { since: kstDayStartDb(-1), until: kstDayStartDb(0) };
   if (/이번\s*주|금주|이번주/.test(s)) {
     const kst = new Date(Date.now() + 9 * 3600 * 1000);
     const dow = (kst.getUTCDay() + 6) % 7;   // 월=0
-    return { since: kstDayStartISO(-dow), until: null };
+    return { since: kstDayStartDb(-dow), until: null };
   }
-  if (/오늘|금일/.test(s)) return { since: kstDayStartISO(0), until: null };
-  return { since: null, until: null };       // 키워드 없음 → 기간 제한 없음
+  if (/오늘|금일/.test(s)) return { since: kstDayStartDb(0), until: null };
+  return { since: null, until: null };
 }
 
 export async function searchBySender(env, query, opts = {}) {
@@ -79,8 +84,8 @@ export async function searchBySender(env, query, opts = {}) {
 
   const range = opts.noDate ? { since: null, until: null } : dateRangeFromQuery(query);
   const dateConds = [], dateBinds = [];
-  if (range.since) { dateConds.push("created_at >= datetime(?)"); dateBinds.push(range.since); }
-  if (range.until) { dateConds.push("created_at < datetime(?)");  dateBinds.push(range.until); }
+  if (range.since) { dateConds.push("created_at >= ?"); dateBinds.push(range.since); }
+  if (range.until) { dateConds.push("created_at < ?");  dateBinds.push(range.until); }
   const extra = dateConds.length ? " AND " + dateConds.join(" AND ") : "";
 
   // 한 측(messages/files) 바인드 = likeBinds + dateBinds. UNION이라 두 번 반복.
