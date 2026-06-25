@@ -18,6 +18,12 @@ async function getFileUrl(env, fileId) {
 }
 
 const STT_PROMPT = "SK하이닉스 커뮤니케이션 총괄의 회의/간담회 녹음입니다. 여러 명이 번갈아 발언합니다. 인명·직책·기관명(SK하이닉스, 환경재단, UNEP 등)·프로젝트명(넥서스, 서남권, ADR 등)·숫자·금액을 정확히 받아쓰세요.";
+const KOREAN_KEYTERMS = [
+  "SK하이닉스", "SK텔레콤", "커뮤니케이션총괄", "염성진", "권오혁", "이동연",
+  "용인", "서남권", "넥서스", "ADR", "HBM", "AI", "데이터센터",
+  "환경재단", "UNEP", "GGGI", "산업부", "기후부", "공정위", "국회", "BH",
+  "반도체", "재생에너지", "LNG", "SMR", "상생협약", "초과이익",
+];
 
 function looksBadTranscript(text) {
   const body = String(text || "").replace(/\s+/g, " ").trim();
@@ -58,9 +64,69 @@ async function transcribeTextModel(env, audioBuf, filename, model, timeoutMs) {
   return { plain: t, timed: t };
 }
 
+async function transcribeAssemblyAI(env, audioBuf, filename, timeoutMs) {
+  const apiKey = env.ASSEMBLYAI_API_KEY;
+  if (!apiKey) throw new Error("ASSEMBLYAI_API_KEY missing");
+  const deadline = Date.now() + (timeoutMs || 240000);
+
+  const uploadRes = await fetch("https://api.assemblyai.com/v2/upload", {
+    method: "POST",
+    headers: { authorization: apiKey },
+    body: audioBuf,
+  });
+  if (!uploadRes.ok) throw new Error("AssemblyAI upload failed " + uploadRes.status + ": " + (await uploadRes.text()).slice(0, 300));
+  const uploaded = await uploadRes.json();
+  const audioUrl = uploaded.upload_url;
+  if (!audioUrl) throw new Error("AssemblyAI upload_url missing");
+
+  const createRes = await fetch("https://api.assemblyai.com/v2/transcript", {
+    method: "POST",
+    headers: { authorization: apiKey, "content-type": "application/json" },
+    body: JSON.stringify({
+      audio_url: audioUrl,
+      language_code: "ko",
+      speaker_labels: true,
+      keyterms_prompt: KOREAN_KEYTERMS,
+    }),
+  });
+  if (!createRes.ok) throw new Error("AssemblyAI transcript create failed " + createRes.status + ": " + (await createRes.text()).slice(0, 300));
+  const created = await createRes.json();
+  if (!created.id) throw new Error("AssemblyAI transcript id missing");
+
+  while (Date.now() < deadline) {
+    const pollRes = await fetch("https://api.assemblyai.com/v2/transcript/" + encodeURIComponent(created.id), {
+      headers: { authorization: apiKey },
+    });
+    if (!pollRes.ok) throw new Error("AssemblyAI transcript poll failed " + pollRes.status + ": " + (await pollRes.text()).slice(0, 300));
+    const data = await pollRes.json();
+    if (data.status === "completed") {
+      const plain = String(data.text || "").trim();
+      if (looksBadTranscript(plain)) throw new Error("AssemblyAI produced unusable transcript");
+      const utterances = Array.isArray(data.utterances) ? data.utterances : [];
+      const timed = utterances
+        .map(function (u) {
+          return String(u.speaker || "?") + ": " + String(u.text || "").trim();
+        })
+        .filter(function (line) { return line.replace(/^.: /, "").trim(); })
+        .join("\n");
+      return { plain, timed: timed || plain };
+    }
+    if (data.status === "error") throw new Error("AssemblyAI STT failed: " + (data.error || "unknown error"));
+    await new Promise(function (resolve) { setTimeout(resolve, 5000); });
+  }
+  throw new Error("AssemblyAI STT timeout");
+}
+
 // STT. timeoutMs 로 모델별 제한시간을 조절(큐는 넉넉히, 웹훅은 짧게).
 async function transcribe(env, audioBuf, filename, timeoutMs) {
   const t = timeoutMs || 24000;
+  if (env.ASSEMBLYAI_API_KEY) {
+    try {
+      return await transcribeAssemblyAI(env, audioBuf, filename, t);
+    } catch (e) {
+      console.error("AssemblyAI STT error", e && e.message);
+    }
+  }
   try {
     return await transcribeTextModel(env, audioBuf, filename, "gpt-4o-transcribe", t);
   } catch (e) {
