@@ -375,7 +375,7 @@ export async function runVoiceQueue(env) {
       const pend = (await env.DB.prepare(
         "SELECT id, chat_id, file_id, aai_id, aai_polls, sender FROM files " +
         "WHERE aai_id IS NOT NULL AND aai_id != '' AND (text IS NULL OR text = '') " +
-        "AND created_at >= datetime('now','-2 hours') ORDER BY id ASC LIMIT 1"
+        "AND created_at >= datetime('now','-24 hours') ORDER BY id ASC LIMIT 1"
       ).first());
       if (pend) {
         const polls = (pend.aai_polls || 0) + 1;
@@ -420,7 +420,7 @@ export async function runVoiceQueue(env) {
       "SELECT id, chat_id, file_id, r2_key, filename, sender FROM files " +
       "WHERE (text IS NULL OR text = '') AND (aai_id IS NULL OR aai_id = '') AND r2_key != '' AND " + VOICE_AUDIO_LIKE + " " +
       "AND NOT EXISTS (SELECT 1 FROM files f2 WHERE f2.file_id = files.file_id AND f2.text != '') " +
-      "AND created_at >= datetime('now','-2 hours') ORDER BY id ASC LIMIT 6"
+      "AND created_at >= datetime('now','-24 hours') ORDER BY id ASC LIMIT 6"
     ).all()).results || [];
     let row = null;
     for (const c of cands) {
@@ -703,7 +703,7 @@ export async function makeMinutesFromStored(env, chatId) {
   try {
     pending = await env.DB.prepare(
       "SELECT id FROM files WHERE chat_id = ? AND (text IS NULL OR text = '') AND r2_key != '' AND " +
-      VOICE_AUDIO_LIKE + " AND created_at >= datetime('now','-2 hours') ORDER BY id DESC LIMIT 1"
+      VOICE_AUDIO_LIKE + " AND created_at >= datetime('now','-24 hours') ORDER BY id DESC LIMIT 1"
     ).bind(String(chatId)).first();
   } catch (e) { console.error("makeMinutes pending check error", e && e.message); }
   const row = await latestMeeting(env, chatId);
