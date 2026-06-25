@@ -300,7 +300,9 @@ const VOICE_AUDIO_LIKE =
   "OR filename LIKE '%voice%' OR filename LIKE '%녹음%')";
 
 function minutesTargetChat(env, fallbackChatId) {
-  return String((env && env.BRIEFING_TARGET_ID) || fallbackChatId || "");
+  // 녹음을 올린 방(fallbackChatId)으로 회신한다. 단체방에 올리면 단체방으로,
+  // 개인톡에 올리면 개인톡으로. BRIEFING_TARGET_ID는 값이 없을 때만 폴백.
+  return String(fallbackChatId || (env && env.BRIEFING_TARGET_ID) || "");
 }
 
 // 매분 Cron 이 호출 — 대기 중인 녹음 1건을 받아쓰기. Cron 핸들러는 웹훅보다 실행시간이 길어
