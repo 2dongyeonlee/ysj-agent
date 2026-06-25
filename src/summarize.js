@@ -305,7 +305,8 @@ export async function smartReplyRequest(env, chatId, repliedMsg, instruction) {
     "[참고 자료]는 관련 맥락으로만 활용하고 없으면 무시한다. " +
     "이모지·마크다운 금지, HTML <b>만 사용. 표가 필요하면 줄/구분선으로 텔레그램에서 보기 좋게. " +
     "요청에 형식 지정이 없으면 다음 양식: ■ <b>배경</b> / ■ <b>주요 내용</b> / ■ <b>Action Item</b> / ■ <b>일정</b> / ■ <b>참석/관계자</b>. " +
-    "자료에 없는 내용은 지어내지 말 것.";
+    "자료에 없는 내용은 지어내지 말 것." +
+    "\n[중대] 제공된 자료/맥락에 실제로 있는 내용만 쓴다. 없는 사실을 지어내지 말고, 근거 자료가 없으면 '관련 자료를 찾지 못했습니다'라고 답하라.";
   const prompt = "[사용자 요청]\n" + instruction +
     "\n\n[주 자료]\n" + source.slice(0, 10000) +
     (related ? ("\n\n[참고 자료]\n" + related.slice(0, 2000)) : "");
@@ -334,12 +335,19 @@ export async function searchAndSummarize(env, chatId, text) {
   let rows;
   try { rows = (await env.DB.prepare(sql).bind(...binds).all()).results; }
   catch (e) { console.error("searchAndSummarize query error", e && e.message); return false; }
-  if (!rows || !rows.length) return false;
+  if (!rows || !rows.length) {
+    await sendMessage(env, chatId,
+      (sender ? "'" + sender + "'" : "해당") + " 관련 공유 자료를 찾지 못했습니다.\n" +
+      "찾은 자료가 없어 내용을 임의로 작성하지 않았습니다. (발신자명·기간을 바꿔 다시 시도해 보세요.)");
+    return true;
+  }
   const merged = rows.map(function (r) { return "[" + (r.filename || "자료") + "]\n" + r.text; }).join("\n\n").slice(0, 10000);
   const sys = PERSONA_STYLE + "\n\n" +
     "당신은 염성진 사장 보고 비서다. 아래 자료를 다음 양식으로 요약하라. " +
     "■ <b>배경</b> / ■ <b>주요 내용</b> / ■ <b>Action Item</b> / ■ <b>일정</b> / ■ <b>참석/관계자</b>. " +
-    "이모지·마크다운 금지, HTML <b>만. 없는 내용 창작 금지.";
+    "이모지·마크다운 금지, HTML <b>만. " +
+    "[중대] 아래 제공된 자료에 실제로 있는 내용만 쓴다. 자료에 없는 사실·수치·일정·발언을 절대 지어내지 마라. " +
+    "제공된 자료가 요청과 무관하면 '요청과 일치하는 자료를 찾지 못했습니다'라고만 답하라.";
   try {
     const out = await callClaude(env, "자료:\n" + merged, sys, MODEL_FAST, 2500);
     await sendMessage(env, chatId, out || "요약에 실패했습니다.");
