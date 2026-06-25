@@ -60,10 +60,13 @@ export async function searchBySender(env, query) {
 
   try {
     const { results } = await env.DB.prepare(
-      `SELECT chat_id, sender, text, created_at FROM messages
-       WHERE (${likes}) AND length(text) >= 5
+      `SELECT sender, text, created_at, '' AS filename FROM messages
+        WHERE (${likes}) AND length(text) >= 5
+       UNION ALL
+       SELECT sender, text, created_at, filename FROM files
+        WHERE (${likes}) AND text != ''
        ORDER BY created_at DESC LIMIT 10`
-    ).bind(...binds).all();
+    ).bind(...binds, ...binds).all();
     return (results && results.length) ? results : null;
   } catch (e) {
     console.error("searchBySender error:", e.message);
