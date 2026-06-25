@@ -5,7 +5,7 @@ import { callClaude, MODEL_FAST, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 import { loadProjectKeywords, matchProjects, detectDone, detectUrgent, classifyInfoCategory, normalizeProject, parseInfoMeta } from "./insight.js";
-import { saveFile, updateInsightDone, qPush, qShift } from "./db.js";
+import { saveFile, updateInsightDone, qPush, qShift, searchBySender } from "./db.js";
 import { createMeetingMinutes, withMetaFollowup } from "./voice.js";
 
 const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" + `문서를 읽고 JSON만 반환하라. 마크다운 금지.
@@ -266,6 +266,25 @@ export async function summarizeLatest(env, chatId, keyword) {
   }
   const out = await callClaude(env, "문서 내용:\n" + row.text.slice(0, 9000), SUMMARY_SYSTEM, MODEL_SMART, 1200);
   await sendMessage(env, chatId, out);
+}
+
+export async function handleSenderQuery(env, chatId, query) {
+  const rows = await searchBySender(env, query);
+  if (!rows || !rows.length) return false;   // 폴백 신호
+  const ctx = rows.map(r => `${r.sender}: ${r.text}`).join("\n");
+  const sys = PERSONA_STYLE + "\n\n" +
+    "특정 인물이 최근 공유·전달한 내용을 사장 보고용으로 요약하라. " +
+    "이모지·마크다운 금지, HTML <b>만. 자료에 없는 내용은 지어내지 말 것. " +
+    "형식: ■ <b>핵심</b> / ■ <b>주요 내용</b> / ■ <b>Action</b>.";
+  const prompt = "[요청]\n" + query + "\n\n[해당 인물 최근 공유]\n" + ctx.slice(0, 8000);
+  try {
+    const out = await callClaude(env, prompt, sys, MODEL_FAST, 2000);
+    await sendMessage(env, chatId, out || "요약 실패. 다시 시도해주세요.");
+    return true;
+  } catch (e) {
+    console.error("handleSenderQuery error:", e && e.message);
+    return false;
+  }
 }
 
 // reply 대상 + 자유 지시 → 지시대로 처리. 관련 자료가 DB에 있으면 참고로 보강.
