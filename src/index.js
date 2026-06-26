@@ -139,6 +139,10 @@ export default {
       })());
       return;
     }
+    if (event.cron === "30 4 * * *") {
+      ctx.waitUntil(runInfoBriefing(env, null, 7));
+      return;
+    }
     // 평일 아침 브리핑.
     ctx.waitUntil((async function () {
       await runMorningBriefing(env);
@@ -152,7 +156,8 @@ async function route(env, msg) {
   const botUsername = env.BOT_USERNAME || "";
   const rawText = (msg.text || msg.caption || "").trim();
   // 단체방 멘션 여부를 먼저 기억(자연어 게이트용), 그 뒤 @봇이름을 제거해 명령·자연어를 정규화
-  const wasMentioned = !!(botUsername && rawText.indexOf("@" + botUsername) !== -1);
+  const wasMentioned = !!(botUsername &&
+    rawText.toLowerCase().indexOf("@" + botUsername.toLowerCase()) !== -1);
   const text = botUsername
     ? rawText.replace(new RegExp("@" + botUsername + "\\b\\s*", "ig"), "").trim()
     : rawText;
@@ -542,8 +547,7 @@ async function route(env, msg) {
   await collectMessage(env, msg);
 
   if (selfAudio) {
-    // 녹음 파일은 명령어 없이도 바로 회의록을 작성한다.
-    await handleVoice(env, chatId, msg, true);
+    if (isDM) { await handleVoice(env, chatId, msg, true); return; }
     return;
   }
   if (msg.document || (msg.photo && msg.photo.length)) {

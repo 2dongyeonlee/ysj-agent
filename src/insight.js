@@ -404,6 +404,13 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
     if (!summary && !category && !uniqProj.some(Boolean)) return null;
 
     for (const proj of uniqProj) {
+      if (proj && sourceRef) {
+        try {
+          const dup = await env.DB.prepare("SELECT id FROM insights WHERE source_ref = ? AND project = ? LIMIT 1")
+            .bind(String(sourceRef), proj).first();
+          if (dup) continue;
+        } catch (e) { console.error("insight project dup check error", e && e.message); }
+      }
       if (proj && detectDone(matchText)) {
         try { await updateInsightDone(env, proj); } catch (e) { console.error("updateInsightDone error", e && e.message); }
       }
