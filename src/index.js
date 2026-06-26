@@ -140,13 +140,13 @@ export default {
       return;
     }
     if (event.cron === "0 5 * * *") {
-      ctx.waitUntil(runInfoBriefing(env, null, 7));
+      ctx.waitUntil(runInfoBriefing(env, null, 2));
       return;
     }
     // 평일 아침 브리핑.
     ctx.waitUntil((async function () {
       await runMorningBriefing(env);
-      await runInfoBriefing(env, null, 7);
+      await runInfoBriefing(env, null, 2);
     })());
   },
 };
@@ -458,7 +458,11 @@ async function route(env, msg) {
   if (text.startsWith("/decision")) return runBrief(env, chatId); // decision 은 /brief 로 통합
   if (text.startsWith("/info")) {
     const arg = text.replace("/info", "").trim();
-    const days = /^\d+$/.test(arg) ? parseInt(arg, 10) : 2; // 기본 전날+당일
+    let days = 2;
+    if (/^\d+$/.test(arg)) days = parseInt(arg, 10);
+    else if (/이번\s*주|금주|주간/.test(arg)) days = 7;
+    else if (/오늘|금일/.test(arg)) days = 1;
+    else if (/한\s*달|월간|이번\s*달/.test(arg)) days = 30;
     return runInfoBriefing(env, chatId, days);
   }
   if (text.startsWith("/project")) {

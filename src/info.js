@@ -77,9 +77,18 @@ function sinceDaysIso(days) {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
+function kstSinceDb(days) {
+  // KST 기준 (days)일 전 자정 -> DB 비교용 'YYYY-MM-DD HH:MM:SS'(UTC)
+  const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  kst.setUTCHours(0, 0, 0, 0);
+  kst.setUTCDate(kst.getUTCDate() - (days - 1));
+  const utc = new Date(kst.getTime() - 9 * 60 * 60 * 1000);
+  return utc.toISOString().slice(0, 19).replace("T", " ");
+}
+
 function todayText() {
-  const d = new Date();
-  return (d.getMonth() + 1) + "/" + d.getDate();
+  const d = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  return (d.getUTCMonth() + 1) + "/" + d.getUTCDate();
 }
 
 function displaySender(row) {
@@ -200,7 +209,14 @@ function withTimeout(promise, ms, message) {
 }
 
 export async function runInfoBriefing(env, chatId, days) {
-  const rows = await getInfoInsightsSince(env, sinceDaysIso(days || 14), INFO_CATEGORIES.map(function (c) { return c.name; }));
+  days = Math.max(1, parseInt(days || 2, 10) || 2);
+  const period = days <= 1 ? "오늘"
+    : days === 2 ? "어제~오늘"
+      : "최근 " + days + "일";
+  const greet = !chatId
+    ? "<b>금일 대외정보 요약 보고드립니다. (" + period + ")</b>\n\n"
+    : "<b>대외정보 요약 (" + period + ")</b>\n\n";
+  const rows = await getInfoInsightsSince(env, kstSinceDb(days || 2), INFO_CATEGORIES.map(function (c) { return c.name; }));
   const items = dedupeIssues((rows || []).filter(function (r) { return r.category && r.summary; }).sort(recentFirst));
   const visibleItems = selectInfoItems(items);
   if (!items.length) {
@@ -211,11 +227,12 @@ export async function runInfoBriefing(env, chatId, days) {
   try {
     const composed = await composeInfoWithClaude(env, visibleItems);
     if (composed) {
+      const body = greet + composed;
       if (chatId) {
-        await sendLongMessage(env, chatId, composed);
+        await sendLongMessage(env, chatId, body);
       } else {
         const targets = String(env.BRIEFING_TARGET_ID || env.BRIEFING_CHAT_ID || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
-        for (const id of targets) await sendLongMessage(env, id, composed);
+        for (const id of targets) await sendLongMessage(env, id, body);
       }
       return;
     }
@@ -236,7 +253,7 @@ export async function runInfoBriefing(env, chatId, days) {
   lines.push(SEPARATOR);
   lines.push("프로젝트 /project · 핵심 /brief · 간략모드");
 
-  const out = lines.join("\n");
+  const out = greet + lines.join("\n");
   if (chatId) {
     await sendLongMessage(env, chatId, out);
   } else {
