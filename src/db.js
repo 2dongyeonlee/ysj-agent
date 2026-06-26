@@ -117,12 +117,37 @@ export async function searchAll(env, query) {
     k.setUTCDate(k.getUTCDate() - (days - 1));
     const since = new Date(k.getTime() - 9 * 3600 * 1000).toISOString().slice(0, 19).replace("T", " ");
     try {
-      const mt = await env.DB.prepare(
+      const mtFile = await env.DB.prepare(
         `SELECT 'file' AS src, sender, COALESCE(full_minutes, text) AS body, filename, doc_type, '' AS project, created_at
-           FROM files WHERE doc_type = 'meeting' AND created_at >= ? AND text != ''
-           ORDER BY created_at DESC LIMIT 15`
+           FROM files
+          WHERE created_at >= ? AND text != '' AND text NOT LIKE '[%'
+            AND ( doc_type = 'meeting'
+               OR filename LIKE '%.m4a' OR filename LIKE '%.ogg' OR filename LIKE '%.oga'
+               OR filename LIKE '%녹음%' OR filename LIKE '%면담%' OR filename LIKE '%회의%'
+               OR filename LIKE '%Monthly%' OR filename LIKE '%브리프%' OR filename LIKE '%티미팅%' )
+          ORDER BY created_at DESC LIMIT 12`
       ).bind(since).all();
-      if (mt.results && mt.results.length) return mt.results;
+
+      const mtMsg = await env.DB.prepare(
+        `SELECT 'msg' AS src, sender, text AS body, '' AS filename, '' AS doc_type, '' AS project, created_at
+           FROM messages
+          WHERE created_at >= ?
+            AND ( text LIKE '회의록%' OR text LIKE '%협의회%' OR text LIKE '%임원티미팅%'
+               OR text LIKE '%티미팅%' OR text LIKE '%간담회%' OR text LIKE '%면담%' )
+            AND length(text) > 50
+          ORDER BY created_at DESC LIMIT 10`
+      ).bind(since).all();
+
+      const merged = [...(mtFile.results || []), ...(mtMsg.results || [])];
+      if (merged.length) {
+        const seen = new Set();
+        return merged.filter(function (r) {
+          const key = r.filename || String(r.body || "").slice(0, 40);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      }
     } catch (e) { console.error("searchAll meeting", e.message); }
   }
 
