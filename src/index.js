@@ -1,6 +1,6 @@
 // index.js — entry point. routing only. Bot stays silent unless explicitly called.
 import { collectMessage, runFileProcessQueue } from "./collect.js";
-import { runMorningBriefing, runBrief } from "./briefing.js";
+import { runMorningBriefing, runBrief, runBriefAuto } from "./briefing.js";
 import { enqueueDocumentSummary, runDocumentSummaryQueue, summarizeFile, summarizeLatest, smartReplyRequest, handleSenderQuery, handleQuery } from "./summarize.js";
 import { handleQA } from "./qa.js";
 import { runInfoBriefing } from "./info.js";
@@ -143,10 +143,15 @@ export default {
       ctx.waitUntil(runInfoBriefing(env, null, 2));
       return;
     }
+    if (event.cron === "40 7 * * *") {
+      ctx.waitUntil(runBriefAuto(env));
+      return;
+    }
     // 평일 아침 브리핑.
     ctx.waitUntil((async function () {
       await runMorningBriefing(env);
       await runInfoBriefing(env, null, 2);
+      await runBriefAuto(env);
     })());
   },
 };

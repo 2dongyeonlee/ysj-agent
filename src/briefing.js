@@ -289,6 +289,16 @@ export async function runBrief(env, chatId) {
   await sendLongMessage(env, chatId, lines.join("\n"));
 }
 
+export async function runBriefAuto(env) {
+  const targets = String(env.BRIEFING_TARGET_ID || "").split(",")
+    .map(function (s) { return s.trim(); })
+    .filter(Boolean);
+  for (const id of targets) {
+    try { await runBrief(env, id); }
+    catch (e) { console.error("runBriefAuto", e && e.message); }
+  }
+}
+
 export async function runContactBriefing(env, chatId, days = 7) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   const rows = await getRecentEngagements(env, since);
