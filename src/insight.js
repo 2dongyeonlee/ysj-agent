@@ -4,6 +4,18 @@
 import { callClaude, MODEL_FAST } from "./claude.js";
 import { getProjectKeywords, updateInsightDone } from "./db.js";
 import { stripSalutation } from "./utils.js";
+import { sendMessage } from "./telegram.js";
+
+function escapeHtml(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function code(text) {
+  return "<code>" + escapeHtml(text) + "</code>";
+}
 
 const INFO_CATEGORIES = ["정부", "국회", "BH", "글로벌", "언론", "경쟁사", "내부", "기타"];
 
@@ -22,7 +34,8 @@ JSON만 반환하라. 마크다운 금지.
    - "정책"·"언론PR" 쓰지 말 것 → 정부·언론으로.
 3. 대면 활동도 대외정보다. 만난 상대 소속으로 category 분류(정부 인사 면담→정부).
 4. project는 nexus/넥서스 표기를 'nexus'로 통일.
-5. 없는 값은 빈 문자열(''). 추론·창작 금지.
+5. 등록된 프로젝트에 없지만 명백히 새로운 중요 사안이면 new_project 필드에 한국어 명칭을 넣어라(없으면 빈 문자열).
+6. 없는 값은 빈 문자열(''). 추론·창작 금지.
 
 [결정/출처]
 decision·followup 컬럼은 사용하지 않는다. 결정사항은 summary에 문서가 명시한 내용만 짧게 포함한다.
@@ -33,6 +46,7 @@ decision·followup 컬럼은 사용하지 않는다. 결정사항은 summary에 
   "category": "정부, 국회, BH, 글로벌, 언론, 경쟁사, 내부, 기타 중 하나. 반드시 채운다(빈 값 금지). kind가 project면 빈 문자열",
   "project": "프로젝트명. nexus/넥서스는 nexus. kind가 project가 아니면 빈 문자열",
   "schedule": "날짜+안건. 없으면 빈 문자열",
+  "new_project": "등록된 프로젝트에 없지만 명백히 새로운 중요 사안이면 한국어 명칭. 없으면 빈 문자열",
   "summary": "사장이 30초 안에 파악하는 보고용 1줄 요약. 반드시 마침표로 끝나는 완결된 한 문장으로 쓰고 문장을 중간에 끊지 말 것. 본문의 구체값(금액·숫자·대상·일시·장소·참석자·기관명)을 포함해 '무엇을·누가·얼마·언제'가 드러나게. 80자 내외로 핵심만 담되 완결을 우선한다. 막연한 표현('지원 내용 발표','과제 보고') 금지. 인사말('사장님' 등)·머리표·번호('1.','Ⅱ.')·불릿·이모지·제목 형식 금지. 본문에 구체 내용이 없으면 '(내용 확인 필요)'.",
   "people": "관련 인물·소속을 최대한 구체적으로(이름+직책/소속). 대면·면담·발언 자료는 누가 등장하는지 반드시 추출. 없으면 빈 문자열"
 }`;
@@ -409,6 +423,27 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
         author: proj ? null : meta.author,
         reportDate: proj ? null : meta.reportDate,
       });
+    }
+
+    // 새 프로젝트 후보: 자동 등록하지 않고 관리자에게 알림만.
+    const newProj = normalizeProject(parsed.new_project);
+    if (newProj && (!projects.length) && newProj.length >= 2) {
+      try {
+        const known = await loadProjectKeywords(env);
+        const exists = (known || []).some(r => normalizeProject(r.project) === newProj);
+        // 같은 후보 24h 내 중복 알림 방지(KV 키)
+        const dedupKey = "newproj:" + newProj;
+        const seen = await env.STATE.get(dedupKey);
+        if (!exists && !seen) {
+          await env.STATE.put(dedupKey, "1", { expirationTtl: 86400 });
+          if (env.ADMIN_CHAT_ID) {
+            await sendMessage(env, env.ADMIN_CHAT_ID,
+              "🆕 새 프로젝트 후보: <b>" + escapeHtml(newProj) + "</b>\n" +
+              "근거: " + escapeHtml(summary.slice(0, 60)) + "\n" +
+              "등록: " + code("/addproject " + newProj + " | 키워드"));
+          }
+        }
+      } catch (e) { console.error("new project suggest error", e && e.message); }
     }
 
     const savedProject = uniqProj.find(Boolean) || "";
