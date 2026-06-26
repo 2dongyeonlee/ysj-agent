@@ -139,7 +139,7 @@ export default {
       })());
       return;
     }
-    if (event.cron === "30 4 * * *") {
+    if (event.cron === "30 4 * * *" || event.cron === "0 5 * * *") {
       ctx.waitUntil(runInfoBriefing(env, null, 7));
       return;
     }
