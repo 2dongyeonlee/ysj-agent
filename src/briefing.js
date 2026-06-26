@@ -1,7 +1,7 @@
 // briefing.js - morning briefing, /brief, and contact briefing.
 
 import { getMessagesSince, getRecentEngagements, getInsightsSince } from "./db.js";
-import { callClaude, MODEL_SMART } from "./claude.js";
+import { callClaude, MODEL_SMART, MODEL_FAST } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 import { stripHtml, oneLine, issueDate, issueScore, senderTag } from "./utils.js";
@@ -241,7 +241,7 @@ export async function runBrief(env, chatId) {
   if (sourceRows.length) {
     try {
       const composed = cleanBriefOutput(await withTimeout(
-        callClaude(env, buildBriefPrompt(sourceRows), BRIEF_SYSTEM, MODEL_SMART, 2000),
+        callClaude(env, buildBriefPrompt(sourceRows), BRIEF_SYSTEM, MODEL_FAST, 2000),
         25000,
         "brief compose timeout"
       ));

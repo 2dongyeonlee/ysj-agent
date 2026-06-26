@@ -72,11 +72,13 @@ export async function sendMessage(env, chatId, text) {
 }
 
 export async function sendDocument(env, chatId, fileId, caption = "") {
+  const cleanFileId = String(fileId || "").trim().replace(/\s/g, "");
+  if (!cleanFileId) { console.error("sendDocument: invalid file_id"); return { ok: false }; }
   const clean = cleanForHtml(caption);
   const res = await fetch(`${apiBase(env)}/sendDocument`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, document: fileId, caption: clean.slice(0, 1000), parse_mode: "HTML" }),
+    body: JSON.stringify({ chat_id: chatId, document: cleanFileId, caption: clean.slice(0, 1000), parse_mode: "HTML" }),
   });
   if (!res.ok) {
     console.error("sendDocument fail", await res.text());
@@ -84,11 +86,12 @@ export async function sendDocument(env, chatId, fileId, caption = "") {
     const retry = await fetch(`${apiBase(env)}/sendDocument`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, document: fileId, caption: plain.slice(0, 1000) }),
+      body: JSON.stringify({ chat_id: chatId, document: cleanFileId, caption: plain.slice(0, 1000) }),
     });
-    return retry.json().catch(() => ({}));
+    if (!retry.ok) return { ok: false };
+    return retry.json().catch(() => ({ ok: false }));
   }
-  return res.json().catch(() => ({}));
+  return res.json().catch(() => ({ ok: false }));
 }
 
 // 바이트(R2 원본 등)를 문서로 업로드 전송. file_id 재전송이 안 될 때 폴백.
