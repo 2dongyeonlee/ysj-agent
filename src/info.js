@@ -183,7 +183,9 @@ async function composeInfoWithClaude(env, items) {
     "info compose timeout"
   );
   const cleaned = cleanInfoOutput(out);
-  if (!cleaned.includes("대외정보") || !cleaned.includes("━━━━━━━━━")) return "";
+  // 성공 판정은 실제 출력 양식에 맞춘다(구분선 ━ 은 양식에 없음 → 요구하면 항상 실패 →
+  // 늘 90자에서 잘리는 수동 폴백으로 빠진다). '대외정보' + '■' 헤더가 있으면 LLM 출력 채택.
+  if (!cleaned.includes("대외정보") || !cleaned.includes("■")) return "";
   return cleaned;
 }
 
