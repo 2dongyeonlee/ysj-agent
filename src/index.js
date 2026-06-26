@@ -498,6 +498,12 @@ async function route(env, msg) {
     if (!kw) return sendMessage(env, chatId, "요약할 대상을 알려주세요. 자료/녹음/메시지에 reply 하거나 '/summary 키워드' 로 검색하세요.");
     return summarizeLatest(env, chatId, kw);
   }
+  const cleanText = text;
+  if ((isDM || isMentioned) && cleanText && cleanText.length >= 5
+      && !text.startsWith("/") && !isAudioMsg(msg.reply_to_message)) {
+    if (await handleSenderQuery(env, chatId, cleanText)) return;
+    if (await handleQuery(env, chatId, cleanText)) return;
+  }
   // "위에 3개 메세지 회의록으로 요약해줘" 등 — 최근 N개 텍스트 메시지를 회의록으로(녹음 아님).
   // '회의록' 단어가 있어도 '메세지/대화 N개'면 녹음이 아니라 최근 메시지를 묶는다. /minutes 보다 먼저.
   const msgCountMatch = text.match(/(\d+)\s*(?:개|건|줄)?\s*(?:dm|디엠)?\s*(?:메세지|메시지|대화|내용)/);
@@ -524,7 +530,7 @@ async function route(env, msg) {
     return makeMinutesFromStored(env, chatId);
   }
   // 녹음 없이 최근 텍스트 대화를 묶어 회의록으로 정리. 명령 또는 봇을 직접 부른 경우만.
-  if (text.startsWith("/회의요약") || ((isDM || isMentioned) && /회의\s*요약/.test(text))) {
+  if (text.startsWith("/회의요약")) {
     const n = parseInt((text.match(/\d+/) || [])[0], 10) || 30;
     return summarizeRecentMessages(env, chatId, n);
   }
@@ -577,15 +583,11 @@ async function route(env, msg) {
 
   // Both 1:1 and group-mention go through the SAME natural-language routing,
   // so answers are identical in quality. Group: only when mentioned. 1:1: always.
-  const cleanText = text;
   if ((isDM && text) || isMentioned) {
     // 정규식·카테고리 분류 대신 LLM(Haiku)이 의도를 파악해 처리.
     // reply 있으면 그 대상을 컨텍스트로, 없으면 null.
     // 5자 미만 짧은 말(ㅇㅋ, 잠깐만 등)은 무시.
     if (cleanText && cleanText.length >= 5) {
-      // 발신자 검색 우선. "OO이 공유한/보고한 ..." 이면 그 사람 자료 요약.
-      if (await handleSenderQuery(env, chatId, cleanText)) return;
-      if (await handleQuery(env, chatId, cleanText)) return;
       const replyCtx = (msg.reply_to_message && (msg.reply_to_message.text || msg.reply_to_message.caption))
         ? msg.reply_to_message : null;
       return smartReplyRequest(env, chatId, replyCtx, cleanText);

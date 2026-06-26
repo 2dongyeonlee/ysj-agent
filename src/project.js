@@ -145,10 +145,7 @@ function projectOneLine(text, limit) {
 
 function formatItem(tag, row, brief) {
   const limit = brief ? 160 : 220;
-  const src = row.filename
-    ? " (" + escapeHtml(String(row.filename).replace(/\.(pdf|pptx|docx|m4a|txt)$/i, "")) + ")"
-    : "";
-  return "  " + tag + " [" + issueDate(row) + "]" + src + " " + projectOneLine(row.summary, limit);
+  return "  " + tag + " [" + issueDate(row) + "] " + projectOneLine(row.summary, limit);
 }
 
 function addMapEntry(map, tag, row) {
