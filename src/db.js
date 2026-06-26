@@ -107,10 +107,29 @@ export async function searchBySender(env, query, opts = {}) {
 }
 
 export async function searchAll(env, query) {
+  const q = String(query || "");
+
+  // "회의" 질문은 주제 키워드보다 기간 내 회의록 전체를 우선한다.
+  if (/회의|미팅|간담회|티미팅/.test(q)) {
+    const k = new Date(Date.now() + 9 * 3600 * 1000);
+    k.setUTCHours(0, 0, 0, 0);
+    const days = /이번\s*주|금주|최근|일주일/.test(q) ? 7 : (/오늘|금일/.test(q) ? 1 : 7);
+    k.setUTCDate(k.getUTCDate() - (days - 1));
+    const since = new Date(k.getTime() - 9 * 3600 * 1000).toISOString().slice(0, 19).replace("T", " ");
+    try {
+      const mt = await env.DB.prepare(
+        `SELECT 'file' AS src, sender, COALESCE(full_minutes, text) AS body, filename, doc_type, '' AS project, created_at
+           FROM files WHERE doc_type = 'meeting' AND created_at >= ? AND text != ''
+           ORDER BY created_at DESC LIMIT 15`
+      ).bind(since).all();
+      if (mt.results && mt.results.length) return mt.results;
+    } catch (e) { console.error("searchAll meeting", e.message); }
+  }
+
   const stop = /(알려줘|요약해줘|요약|정리해줘|정리|해줘|뭐야|어떻게|언제|관련|내용|좀|the)/g;
-  const kw = String(query || "").replace(/[?？!！.]/g, " ").replace(stop, " ")
+  const kw = q.replace(/[?？!！.]/g, " ").replace(stop, " ")
     .trim().split(/\s+/).filter(function (w) { return w.length >= 2; });
-  if (!kw.length) kw.push(String(query || "").slice(0, 8));
+  if (!kw.length) kw.push(q.slice(0, 8));
 
   const out = [];
   const likeM = kw.map(function () { return "text LIKE ?"; }).join(" OR ");
