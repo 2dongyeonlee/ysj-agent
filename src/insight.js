@@ -366,7 +366,6 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
     const isProject = projects.length || kind === "project";
     // project면 category 공란(프로젝트로 분류됨), 아니면 반드시 8개 중 하나 — 비면 "기타".
     const category = isProject ? "" : classifyInfoCategory(matchText, parsed.category);
-    const project = isProject ? (projects[0] || llmProject) : "";
     // 머리표("[보고요망]" 등)·인사말("사장님" 등)을 summary 본문에 박지 않는다.
     let summary = stripSalutation(String(parsed.summary || "").trim()
       .replace(/^\[(보고요망|보고|공유|참고|검토요망|검토|긴급|중요)\]\s*/g, ""));
@@ -380,30 +379,41 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
     }
     const meta = parseInfoMeta(body, sender, receivedAt);
 
-    if (!summary && !category && !project) return null;
-    if (project && detectDone(matchText)) {
-      try { await updateInsightDone(env, project); } catch (e) { console.error("updateInsightDone error", e && e.message); }
+    // A안: 매칭된 모든 프로젝트에 같은 요약으로 각각 저장 (안건별 개별요약은 추후)
+    const projList = isProject
+      ? (projects.length ? projects : (llmProject ? [llmProject] : [""]))
+      : [""];
+
+    // 중복 제거(같은 프로젝트 두 번 방지)
+    const uniqProj = [...new Set(projList)];
+
+    if (!summary && !category && !uniqProj.some(Boolean)) return null;
+
+    for (const proj of uniqProj) {
+      if (proj && detectDone(matchText)) {
+        try { await updateInsightDone(env, proj); } catch (e) { console.error("updateInsightDone error", e && e.message); }
+      }
+      await insertInsight(env, {
+        chatId,
+        sourceType: sourceType || "",
+        sourceRef,
+        schedule: String(parsed.schedule || "").trim(),
+        category: proj ? "" : category,
+        project: proj,
+        summary,
+        people: String(parsed.people || "").trim(),
+        sender,
+        sender_id: senderId || "",
+        inputChars: body.length,
+        readChars: readText.length,
+        author: proj ? null : meta.author,
+        reportDate: proj ? null : meta.reportDate,
+      });
     }
 
-    await insertInsight(env, {
-      chatId,
-      sourceType: sourceType || "",
-      sourceRef,
-      schedule: String(parsed.schedule || "").trim(),
-      category,
-      project,
-      summary,
-      people: String(parsed.people || "").trim(),
-      sender,
-      sender_id: senderId || "",
-      inputChars: body.length,
-      readChars: readText.length,
-      author: category ? meta.author : null,
-      reportDate: category ? meta.reportDate : null,
-    });
-
-    console.log("insight saved:", project || category || "general", summary.slice(0, 30));
-    return { schedule: parsed.schedule || "", category, project, summary, people: parsed.people || "" };
+    const savedProject = uniqProj.find(Boolean) || "";
+    console.log("insight saved:", savedProject || category || "general", summary.slice(0, 30));
+    return { schedule: parsed.schedule || "", category: savedProject ? "" : category, project: savedProject, summary, people: parsed.people || "" };
   } catch (e) {
     console.error("extractInsight error", e && (e.stack || e.message) || e);
     return null;
