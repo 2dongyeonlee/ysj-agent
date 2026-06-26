@@ -1,7 +1,7 @@
 // index.js — entry point. routing only. Bot stays silent unless explicitly called.
 import { collectMessage, runFileProcessQueue } from "./collect.js";
 import { runMorningBriefing, runBrief } from "./briefing.js";
-import { enqueueDocumentSummary, runDocumentSummaryQueue, summarizeFile, summarizeLatest, smartReplyRequest, handleSenderQuery } from "./summarize.js";
+import { enqueueDocumentSummary, runDocumentSummaryQueue, summarizeFile, summarizeLatest, smartReplyRequest, handleSenderQuery, handleQuery } from "./summarize.js";
 import { handleQA } from "./qa.js";
 import { runInfoBriefing } from "./info.js";
 import { runProjectBriefing } from "./project.js";
@@ -585,6 +585,7 @@ async function route(env, msg) {
     if (cleanText && cleanText.length >= 5) {
       // 발신자 검색 우선. "OO이 공유한/보고한 ..." 이면 그 사람 자료 요약.
       if (await handleSenderQuery(env, chatId, cleanText)) return;
+      if (await handleQuery(env, chatId, cleanText)) return;
       const replyCtx = (msg.reply_to_message && (msg.reply_to_message.text || msg.reply_to_message.caption))
         ? msg.reply_to_message : null;
       return smartReplyRequest(env, chatId, replyCtx, cleanText);

@@ -5,7 +5,7 @@ import { callClaude, MODEL_FAST, MODEL_SMART } from "./claude.js";
 import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 import { loadProjectKeywords, matchProjects, detectDone, detectUrgent, classifyInfoCategory, normalizeProject, parseInfoMeta } from "./insight.js";
-import { saveFile, updateInsightDone, qPush, qShift, searchBySender } from "./db.js";
+import { saveFile, updateInsightDone, qPush, qShift, searchBySender, searchAll } from "./db.js";
 import { createMeetingMinutes, withMetaFollowup } from "./voice.js";
 
 const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" + `문서를 읽고 JSON만 반환하라. 마크다운 금지.
@@ -308,6 +308,36 @@ export async function handleSenderQuery(env, chatId, query) {
   } catch (e) {
     console.error("handleSenderQuery error:", e && e.message);
     return true;     // 발신자 확정됐으니 폴백 막음(회의록 오출력 방지)
+  }
+}
+
+export async function handleQuery(env, chatId, query) {
+  const hits = await searchAll(env, query);
+  if (!hits.length) return false;
+
+  const ctx = hits.map(function (h) {
+    const tag = h.doc_type === "meeting" ? "[회의록]"
+      : h.project ? "[" + h.project + "]" : (h.src === "insight" ? "[정보]" : "");
+    const date = (h.created_at || "").slice(0, 10);
+    return tag + (h.filename ? " " + h.filename : "") +
+      " (" + date + ") " + (h.sender || "") + ": " + String(h.body || "").slice(0, 600);
+  }).join("\n\n");
+
+  const sys = PERSONA_STYLE + "\n\n" +
+    "사장의 질문에 대해 아래 검색된 사내 자료(회의록·메시지·정보)를 종합해 보고용으로 답하라.\n" +
+    "여러 자료를 통합하고 같은 사안은 합친다. 회의·자료가 여러 건이면 흐름을 보인다.\n" +
+    "자료에 없으면 '관련 자료를 찾지 못했습니다'라 하고 절대 지어내지 말 것.\n" +
+    "형식: ■ <b>핵심</b> / ■ <b>주요 내용</b>(불릿) / ■ <b>챙길 것</b>(해당 시).\n" +
+    "이모지·마크다운 금지, HTML <b>만. 구분선 ─────.";
+
+  const prompt = "[질문]\n" + query + "\n\n[검색된 자료]\n" + ctx.slice(0, 14000);
+  try {
+    const out = await callClaude(env, prompt, sys, MODEL_SMART, 2500);
+    await sendMessage(env, chatId, out || "답변 생성에 실패했습니다.");
+    return true;
+  } catch (e) {
+    console.error("handleQuery", e && e.message);
+    return true;
   }
 }
 

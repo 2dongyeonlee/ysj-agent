@@ -106,6 +106,42 @@ export async function searchBySender(env, query, opts = {}) {
   }
 }
 
+export async function searchAll(env, query) {
+  const stop = /(알려줘|요약해줘|요약|정리해줘|정리|해줘|뭐야|어떻게|언제|관련|내용|좀|the)/g;
+  const kw = String(query || "").replace(/[?？!！.]/g, " ").replace(stop, " ")
+    .trim().split(/\s+/).filter(function (w) { return w.length >= 2; });
+  if (!kw.length) kw.push(String(query || "").slice(0, 8));
+
+  const out = [];
+  const likeM = kw.map(function () { return "text LIKE ?"; }).join(" OR ");
+  try {
+    const m = await env.DB.prepare(
+      `SELECT 'msg' AS src, sender, text AS body, '' AS filename, '' AS doc_type, '' AS project, created_at
+         FROM messages WHERE ${likeM} ORDER BY created_at DESC LIMIT 15`
+    ).bind(...kw.map(function (k) { return "%" + k + "%"; })).all();
+    out.push(...(m.results || []));
+  } catch (e) { console.error("searchAll msg", e.message); }
+
+  try {
+    const f = await env.DB.prepare(
+      `SELECT 'file' AS src, sender, COALESCE(full_minutes, text) AS body, filename, doc_type, '' AS project, created_at
+         FROM files WHERE (${likeM}) AND text != '' ORDER BY created_at DESC LIMIT 10`
+    ).bind(...kw.map(function (k) { return "%" + k + "%"; })).all();
+    out.push(...(f.results || []));
+  } catch (e) { console.error("searchAll file", e.message); }
+
+  try {
+    const likeI = kw.map(function () { return "summary LIKE ?"; }).join(" OR ");
+    const i = await env.DB.prepare(
+      `SELECT 'insight' AS src, sender, summary AS body, '' AS filename, '' AS doc_type, project, created_at
+         FROM insights WHERE ${likeI} ORDER BY created_at DESC LIMIT 15`
+    ).bind(...kw.map(function (k) { return "%" + k + "%"; })).all();
+    out.push(...(i.results || []));
+  } catch (e) { console.error("searchAll insight", e.message); }
+
+  return out;
+}
+
 // ===== 파일 (기능2: 자료 전달) =====
 export async function saveFile(env, f) {
   if (f.file_id && f.chat_id) {
