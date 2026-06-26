@@ -3,7 +3,7 @@
 import { getInfoInsightsSince } from "./db.js";
 import { sendMessage } from "./telegram.js";
 import { oneLine, issueDate, issueScore, stripHtml } from "./utils.js";
-import { callClaude, MODEL_SMART } from "./claude.js";
+import { callClaude, MODEL_FAST } from "./claude.js";
 
 function recentFirst(a, b) {
   const sa = issueScore(a), sb = issueScore(b);
@@ -21,7 +21,7 @@ const INFO_CATEGORIES = [
   { name: "경쟁사", icon: "" },
 ];
 
-const SEPARATOR = "━━━━━━━━━";
+const SEPARATOR = "─────";
 const INFO_SYSTEM = `당신은 염성진 사장에게 대외정보를 보고하는 비서다.
 입력은 여러 사람이 공유한 DM·파일·회의록 원문이다. 저장된 summary 앞부분을 베끼지 말고, 원문에서 사장에게 보고할 "안건"을 뽑아 한 줄 보고문으로 다시 작성하라.
 
@@ -34,7 +34,7 @@ const INFO_SYSTEM = `당신은 염성진 사장에게 대외정보를 보고하�
 - 출력은 아래 양식만. 설명, 사족, 마크다운 ** 금지. 굵게는 HTML <b>만 사용.
 - 각 카테고리 안에서 당사 직접 영향 건을 위로, 단순 인지 건은 끝에 "— 인지 수준"으로 짧게 쓴다.
 - 부등호(<, >)를 본문에 쓰지 말 것. "이상/이하/초과/미만"으로 표기한다.
-- 발신자 이름·약칭(SY, Yeom 등) 표기 금지. 중복 내용 병합. 구분선(━,---) 금지. 불릿(•) 한 단계.
+- 발신자 이름·약칭(SY, Yeom 등) 표기 금지. 중복 내용 병합. 구분선은 ─────만 사용. 불릿(•) 한 단계.
 
 [분류 기준]
 - 정부: 장관·차관·부처·공정위·산업부·고용부·기후부·지자체·규제기관
@@ -46,6 +46,7 @@ const INFO_SYSTEM = `당신은 염성진 사장에게 대외정보를 보고하�
 
 [출력 양식]
 대외정보 · {오늘}
+─────
 
 ■ <b>정부</b>
 • [M/D] {안건 1줄}
@@ -65,6 +66,7 @@ const INFO_SYSTEM = `당신은 염성진 사장에게 대외정보를 보고하�
 ■ <b>경쟁사</b>
 • [M/D] {안건 1줄}
 
+─────
 프로젝트 /project · 핵심 /brief`;
 const STOPWORDS = new Set([
   "보고요망", "관련", "통해", "대한", "대해", "하며", "하고", "있다", "있음", "중임",
@@ -178,14 +180,13 @@ function cleanInfoOutput(text) {
 async function composeInfoWithClaude(env, items) {
   const prompt = buildInfoPrompt(items);
   const out = await withTimeout(
-    callClaude(env, prompt, INFO_SYSTEM, MODEL_SMART, 2200),
+    callClaude(env, prompt, INFO_SYSTEM, MODEL_FAST, 2200),
     25000,
     "info compose timeout"
   );
   const cleaned = cleanInfoOutput(out);
-  // 성공 판정은 실제 출력 양식에 맞춘다(구분선 ━ 은 양식에 없음 → 요구하면 항상 실패 →
-  // 늘 90자에서 잘리는 수동 폴백으로 빠진다). '대외정보' + '■' 헤더가 있으면 LLM 출력 채택.
-  if (!cleaned.includes("대외정보") || !cleaned.includes("■")) return "";
+  // 성공 판정은 실제 출력 양식에 맞춘다. 헤더/구분선이 어긋나면 수동 폴백으로 빠진다.
+  if (!cleaned.includes("대외정보") || !cleaned.includes("─────")) return "";
   return cleaned;
 }
 
@@ -228,7 +229,7 @@ export async function runInfoBriefing(env, chatId, days) {
     if (!grouped.length) continue;
     lines.push("■ <b>" + cat.name + "</b>");
     for (const row of grouped) {
-      lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary));
+      lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary, 160));
     }
     lines.push("");
   }

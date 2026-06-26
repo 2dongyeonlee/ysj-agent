@@ -6,7 +6,7 @@ import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 import { stripHtml, oneLine, issueDate, issueScore, senderTag } from "./utils.js";
 
-const SEPARATOR = "━━━━━━━━━";
+const SEPARATOR = "─────";
 const INFO_CATEGORIES = ["정부", "국회", "BH", "글로벌", "언론", "경쟁사"];
 const INTERNAL_PERSON_RE = /염성진|윤풍영|SK그룹 의장|커뮤니케이션위원장|SK그룹|SKHY|SKALA|Hy-Five|해당 사장|TF 총괄|Steering Committee|작의장|CR팀|미래전략/;
 const EXTERNAL_AFFIL_RE = /장관|차관|고용노동부|산업통상자원부|산업부|과기부|정부|국회|의원|BH|대통령|총리|비서실|수석|CEO|해외|글로벌/;
@@ -42,7 +42,7 @@ const BRIEF_SYSTEM = PERSONA_STYLE + "\n\n" +
   "- 아래 양식만 출력. 없는 섹션은 '• 없음' 한 줄.\n" +
   "- 각 항목은 1줄, 90자 안팎. 내용이 메인이다.\n" +
   "- 굵게는 HTML <b>만 사용. 마크다운 ** 금지.\n" +
-  "- 발신자 이름·약칭(SY, Yeom 등) 표기 금지. 중복 내용 병합. 구분선(━,---) 금지. 불릿(•) 한 단계.\n\n" +
+  "- 발신자 이름·약칭(SY, Yeom 등) 표기 금지. 중복 내용 병합. 구분선은 ─────만 사용. 불릿(•) 한 단계.\n\n" +
   "브리핑 · {오늘}\n" +
   "<b>[결정·확인 필요]</b>\n" +
   "• [M/D] {사장이 결정/확인할 내용}\n\n" +
@@ -54,7 +54,7 @@ const BRIEF_SYSTEM = PERSONA_STYLE + "\n\n" +
 const MORNING_SYSTEM = PERSONA_STYLE + "\n\n" +
   "[작업] 지난 하루 대화를 읽고 사장이 출근길 30초에 파악하도록 정리. 각 항목 1줄.\n" +
   "날짜·사람·안건은 <b>굵게</b>. 해당 없는 분류는 생략.\n" +
-  "발신자 이름·약칭(SY, Yeom 등) 표기 금지. 중복 내용 병합. 구분선(━,---) 금지. 불릿(•) 한 단계.\n" +
+  "발신자 이름·약칭(SY, Yeom 등) 표기 금지. 중복 내용 병합. 구분선은 ─────만 사용. 불릿(•) 한 단계.\n" +
   "출력 형식:\n\n" +
   "🗞 <b>아침 브리핑</b>\n\n" +
   "📅 일정\n• 1줄\n\n" +

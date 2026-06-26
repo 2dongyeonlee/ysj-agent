@@ -4,7 +4,7 @@ import { getProjectTimeline } from "./db.js";
 import { sendMessage } from "./telegram.js";
 import { stripHtml, issueDate, issueScore } from "./utils.js";
 
-const SEPARATOR = "━━━━━━━━━";
+const SEPARATOR = "─────";
 const NOISE_RE = /지원 파일 형식|요약할 내용|권한이 없습니다|원문이 없습니다|^\s*$/;
 const PLACEHOLDER_RE = /^(?:내용\s*확인\s*필요|확인\s*필요|전사\s*내용\s*확인\s*필요|상세\s*확인\s*필요|요약\s*불가|없음|[-—])$/;
 

@@ -11,7 +11,7 @@ function apiBase(env) {
 function cleanForHtml(text) {
   let t = String(text || "");
   t = t.replace(/^\s*-{3,}\s*$/gm, "");   // remove --- divider lines
-  t = t.replace(/^[\s]*[━─=]{3,}[\s]*$/gm, "");
+  t = t.replace(/^[\s]*[━=]{3,}[\s]*$/gm, "");
   t = t.replace(/\*\*/g, "");              // remove ** bold markers
   t = t.replace(/^#{1,6}\s*/gm, "");       // remove # headers
   t = t.replace(/\n{3,}/g, "\n\n");        // collapse blank lines

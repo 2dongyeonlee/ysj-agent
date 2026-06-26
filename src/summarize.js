@@ -166,7 +166,7 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false, optio
     } catch (e) {
       console.error("meeting document minutes error", e && e.message);
       minutes = {
-        short: "■ <b>회의 메모</b>\n━━━━━━━━━━━━━━━━━━\n■ <b>결정 필요</b>\n- 없음\n\n■ <b>안건</b>\n1. 음성 메모 문서 — 회의록 생성에 실패해 원문 일부만 저장됨.\n   → 미결: 원문 재확인 필요.\n\n■ <b>후속조치</b>\n- 없음\n━━━━━━━━━━━━━━━━━━\n전체 회의록 필요 시 /minutes",
+        short: "■ <b>회의 메모</b>\n─────\n■ <b>결정 필요</b>\n- 없음\n\n■ <b>안건</b>\n1. 음성 메모 문서 — 회의록 생성에 실패해 원문 일부만 저장됨.\n   → 미결: 원문 재확인 필요.\n\n■ <b>후속조치</b>\n- 없음\n─────\n전체 회의록 필요 시 /minutes",
         full: text.slice(0, 4000),
       };
     }
