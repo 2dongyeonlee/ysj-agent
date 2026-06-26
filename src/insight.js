@@ -42,14 +42,21 @@ decision·followup 컬럼은 사용하지 않는다. 결정사항은 summary에 
 
 스키마:
 {
-  "kind": "project | info | internal",
-  "category": "정부, 국회, BH, 글로벌, 언론, 경쟁사, 내부, 기타 중 하나. 반드시 채운다(빈 값 금지). kind가 project면 빈 문자열",
-  "project": "프로젝트명. nexus/넥서스는 nexus. kind가 project가 아니면 빈 문자열",
-  "schedule": "날짜+안건. 없으면 빈 문자열",
-  "new_project": "등록된 프로젝트에 없지만 명백히 새로운 중요 사안이면 한국어 명칭. 없으면 빈 문자열",
-  "summary": "사장이 30초 안에 파악하는 보고용 1줄 요약. 반드시 마침표로 끝나는 완결된 한 문장으로 쓰고 문장을 중간에 끊지 말 것. 본문의 구체값(금액·숫자·대상·일시·장소·참석자·기관명)을 포함해 '무엇을·누가·얼마·언제'가 드러나게. 80자 내외로 핵심만 담되 완결을 우선한다. 막연한 표현('지원 내용 발표','과제 보고') 금지. 인사말('사장님' 등)·머리표·번호('1.','Ⅱ.')·불릿·이모지·제목 형식 금지. 본문에 구체 내용이 없으면 '(내용 확인 필요)'.",
-  "people": "관련 인물·소속을 최대한 구체적으로(이름+직책/소속). 대면·면담·발언 자료는 누가 등장하는지 반드시 추출. 없으면 빈 문자열"
-}`;
+  "items": [
+    {
+      "kind": "project | info | internal",
+      "category": "info일 때 정부, 국회, BH, 글로벌, 언론, 경쟁사, 내부, 기타 중 하나. project면 빈 문자열",
+      "project": "project일 때 프로젝트명. nexus/넥서스는 nexus. 아니면 빈 문자열",
+      "schedule": "날짜+안건. 없으면 빈 문자열",
+      "new_project": "등록된 프로젝트에 없지만 명백히 새로운 중요 사안이면 한국어 명칭. 없으면 빈 문자열",
+      "summary": "이 안건만의 보고용 1줄 요약. 반드시 마침표로 끝나는 완결된 한 문장으로 쓰고 문장을 중간에 끊지 말 것. 본문의 구체값(금액·숫자·대상·일시·장소·참석자·기관명)을 포함해 '무엇을·누가·얼마·언제'가 드러나게. 80자 내외로 핵심만 담되 완결을 우선한다. 막연한 표현('지원 내용 발표','과제 보고') 금지. 인사말('사장님' 등)·머리표·번호('1.','Ⅱ.')·불릿·이모지·제목 형식 금지. 본문에 구체 내용이 없으면 '(내용 확인 필요)'.",
+      "people": "관련 인물·소속을 최대한 구체적으로(이름+직책/소속). 대면·면담·발언 자료는 누가 등장하는지 반드시 추출. 없으면 빈 문자열"
+    }
+  ]
+}
+
+하나의 자료에 여러 안건·프로젝트·주제가 있으면 안건마다 items 항목을 분리하라.
+회의록·종합 브리핑·복수 안건 DM은 반드시 안건별로 쪼갠다. 단일 주제면 items 1개.`;
 
 // 등록된 프로젝트 목록을 LLM 프롬프트용 힌트로. 프로젝트명 + 키워드 예시.
 // 분류기가 사용자의 프로젝트를 맥락으로 인식하게 한다(키워드 정확 일치 없어도).
@@ -200,6 +207,20 @@ function cleanJson(raw) {
     .trim();
 }
 
+function insightItems(parsed) {
+  const items = Array.isArray(parsed && parsed.items)
+    ? parsed.items
+    : ((parsed && (parsed.summary || parsed.project || parsed.category)) ? [parsed] : []);
+  return items.filter(function (it) {
+    return it && (it.summary || it.project || it.category);
+  });
+}
+
+function firstInsightItem(parsed) {
+  const items = insightItems(parsed);
+  return items[0] || {};
+}
+
 export function normalizeCategory(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -309,6 +330,7 @@ export async function classifyStored(env, { text, filename, caption }) {
     console.error("classifyStored parse error", e && e.message);
     return { project: "", category: "" };
   }
+  parsed = firstInsightItem(parsed);
   const llmProject = normalizeProject(parsed.project);
   const isProject = !!llmProject || String(parsed.kind || "").trim() === "project";
   return {
@@ -331,6 +353,7 @@ export async function resummarizeText(env, text) {
     console.error("resummarizeText parse error", e && e.message);
     return null;
   }
+  parsed = firstInsightItem(parsed);
   let summary = stripSalutation(String(parsed.summary || "").trim()
     .replace(/^\[(보고요망|보고|공유|참고|검토요망|검토|긴급|중요)\]\s*/g, ""));
   if (!summary) {
@@ -355,7 +378,7 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
 
     // 등록 프로젝트 목록을 프롬프트에 주입해 LLM 이 맥락으로 프로젝트를 인식하게 한다.
     const keywords = await loadProjectKeywords(env);
-    const raw = await callClaude(env, "내용:\n" + readText, EXTRACT_SYSTEM + projectHints(keywords), MODEL_FAST, 500);
+    const raw = await callClaude(env, "내용:\n" + readText, EXTRACT_SYSTEM + projectHints(keywords), MODEL_FAST, 900);
     let parsed;
     try {
       parsed = JSON.parse(cleanJson(raw));
@@ -372,90 +395,77 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
       };
     }
 
-    const matchText = cap + " " + fname + " " + body;
-    const matchedProjects = keywords ? matchProjects(keywords, cap, fname, body) : [];
-    const llmProject = normalizeProject(parsed.project);
-    const projects = matchedProjects.length ? matchedProjects : (llmProject ? [llmProject] : []);
-    const kind = String(parsed.kind || "").trim();
-    const isProject = projects.length || kind === "project";
-    // project면 category 공란(프로젝트로 분류됨), 아니면 반드시 8개 중 하나 — 비면 "기타".
-    const category = isProject ? "" : classifyInfoCategory(matchText, parsed.category);
-    // 머리표("[보고요망]" 등)·인사말("사장님" 등)을 summary 본문에 박지 않는다.
-    let summary = stripSalutation(String(parsed.summary || "").trim()
-      .replace(/^\[(보고요망|보고|공유|참고|검토요망|검토|긴급|중요)\]\s*/g, ""));
-    if (!summary) {
-      // LLM 요약 실패 시 원문에서 인사말·머리말 찌꺼기를 떼고 첫 문장을 정제해 사용
-      summary = stripSalutation(cleanDocArtifacts(String(body || "")
-        .replace(/^\[(보고요망|보고|공유|참고|검토)\]\s*/g, "")))
-        .split(/(?<=[.!?。]|다\.|임\.|음\.)\s+/u)[0]
-        .slice(0, 60)
-        .trim();
-    }
+    let items = insightItems(parsed);
+    if (!items.length) return null;
     const meta = parseInfoMeta(body, sender, receivedAt);
+    const savedList = [];
 
-    // A안: 매칭된 모든 프로젝트에 같은 요약으로 각각 저장 (안건별 개별요약은 추후)
-    const projList = isProject
-      ? (projects.length ? projects : (llmProject ? [llmProject] : [""]))
-      : [""];
+    for (const it of items) {
+      const matchedProjects = keywords ? matchProjects(keywords, cap, fname, (it.summary || "") + " " + body) : [];
+      const llmProject = normalizeProject(it.project);
+      const projects = matchedProjects.length ? matchedProjects : (llmProject ? [llmProject] : []);
+      const isProject = projects.length || String(it.kind || "").trim() === "project";
+      const itMatchText = cap + " " + fname + " " + (it.summary || "");
+      const category = isProject ? "" : classifyInfoCategory(itMatchText, it.category);
 
-    // 중복 제거(같은 프로젝트 두 번 방지)
-    const uniqProj = [...new Set(projList)];
+      let summary = stripSalutation(String(it.summary || "").trim()
+        .replace(/^\[(보고요망|보고|공유|참고|검토요망|검토|긴급|중요)\]\s*/g, ""));
+      if (!summary) continue;
 
-    if (!summary && !category && !uniqProj.some(Boolean)) return null;
-
-    for (const proj of uniqProj) {
-      if (proj && sourceRef) {
-        try {
-          const dup = await env.DB.prepare("SELECT id FROM insights WHERE source_ref = ? AND project = ? LIMIT 1")
-            .bind(String(sourceRef), proj).first();
-          if (dup) continue;
-        } catch (e) { console.error("insight project dup check error", e && e.message); }
-      }
-      if (proj && detectDone(matchText)) {
-        try { await updateInsightDone(env, proj); } catch (e) { console.error("updateInsightDone error", e && e.message); }
-      }
-      await insertInsight(env, {
-        chatId,
-        sourceType: sourceType || "",
-        sourceRef,
-        schedule: String(parsed.schedule || "").trim(),
-        category: proj ? "" : category,
-        project: proj,
-        summary,
-        people: String(parsed.people || "").trim(),
-        sender,
-        sender_id: senderId || "",
-        inputChars: body.length,
-        readChars: readText.length,
-        author: proj ? null : meta.author,
-        reportDate: proj ? null : meta.reportDate,
-      });
-    }
-
-    // 새 프로젝트 후보: 자동 등록하지 않고 관리자에게 알림만.
-    const newProj = normalizeProject(parsed.new_project);
-    if (newProj && (!projects.length) && newProj.length >= 2) {
-      try {
-        const known = await loadProjectKeywords(env);
-        const exists = (known || []).some(r => normalizeProject(r.project) === newProj);
-        // 같은 후보 24h 내 중복 알림 방지(KV 키)
-        const dedupKey = "newproj:" + newProj;
-        const seen = await env.STATE.get(dedupKey);
-        if (!exists && !seen) {
-          await env.STATE.put(dedupKey, "1", { expirationTtl: 86400 });
-          if (env.ADMIN_CHAT_ID) {
-            await sendMessage(env, env.ADMIN_CHAT_ID,
-              "🆕 새 프로젝트 후보: <b>" + escapeHtml(newProj) + "</b>\n" +
-              "근거: " + escapeHtml(summary.slice(0, 60)) + "\n" +
-              "등록: " + code("/addproject " + newProj + " | 키워드"));
-          }
+      const projList = isProject ? (projects.length ? projects : (llmProject ? [llmProject] : [""])) : [""];
+      for (const proj of [...new Set(projList)]) {
+        if (proj && sourceRef) {
+          try {
+            const dup = await env.DB.prepare("SELECT 1 FROM insights WHERE source_ref = ? AND project = ? AND summary = ? LIMIT 1")
+              .bind(String(sourceRef), proj, summary).first();
+            if (dup) continue;
+          } catch (e) { console.error("insight project dup check error", e && e.message); }
         }
-      } catch (e) { console.error("new project suggest error", e && e.message); }
+        if (proj && detectDone(itMatchText)) {
+          try { await updateInsightDone(env, proj); } catch (e) { console.error("updateInsightDone error", e && e.message); }
+        }
+        await insertInsight(env, {
+          chatId,
+          sourceType: sourceType || "",
+          sourceRef,
+          schedule: String(it.schedule || "").trim(),
+          category: proj ? "" : category,
+          project: proj,
+          summary,
+          people: String(it.people || "").trim(),
+          sender,
+          sender_id: senderId || "",
+          inputChars: body.length,
+          readChars: readText.length,
+          author: proj ? null : meta.author,
+          reportDate: proj ? null : meta.reportDate,
+        });
+        savedList.push(proj || category || "general");
+      }
+
+      // 새 프로젝트 후보: 자동 등록하지 않고 관리자에게 알림만.
+      const newProj = normalizeProject(it.new_project);
+      if (newProj && !projects.length && newProj.length >= 2) {
+        try {
+          const known = await loadProjectKeywords(env);
+          const exists = (known || []).some(r => normalizeProject(r.project) === newProj);
+          const dedupKey = "newproj:" + newProj;
+          const seen = await env.STATE.get(dedupKey);
+          if (!exists && !seen) {
+            await env.STATE.put(dedupKey, "1", { expirationTtl: 86400 });
+            if (env.ADMIN_CHAT_ID) {
+              await sendMessage(env, env.ADMIN_CHAT_ID,
+                "🆕 새 프로젝트 후보: <b>" + escapeHtml(newProj) + "</b>\n" +
+                "근거: " + escapeHtml(summary.slice(0, 60)));
+            }
+          }
+        } catch (e) { console.error("newproj", e && e.message); }
+      }
     }
 
-    const savedProject = uniqProj.find(Boolean) || "";
-    console.log("insight saved:", savedProject || category || "general", summary.slice(0, 30));
-    return { schedule: parsed.schedule || "", category: savedProject ? "" : category, project: savedProject, summary, people: parsed.people || "" };
+    if (!savedList.length) return null;
+    console.log("insight saved items:", savedList.length, savedList.join(","));
+    return { count: savedList.length };
   } catch (e) {
     console.error("extractInsight error", e && (e.stack || e.message) || e);
     return null;
