@@ -43,13 +43,14 @@ const BRIEF_SYSTEM = PERSONA_STYLE + "\n\n" +
   "- 각 항목은 1줄, 90자 안팎. 내용이 메인이다.\n" +
   "- 굵게는 HTML <b>만 사용. 마크다운 ** 금지.\n" +
   "- 발신자 이름·약칭(SY, Yeom 등) 표기 금지. 중복 내용 병합. 구분선은 ─────만 사용. 불릿(•) 한 단계.\n\n" +
-  "브리핑 · {오늘}\n" +
+  "업무 브리핑 · {오늘}\n" +
   "<b>[결정·확인 필요]</b>\n" +
   "• [M/D] {사장이 결정/확인할 내용}\n\n" +
   "<b>[만남(외부)]</b>\n" +
   "• [M/D] <b>{외부 인물}</b> {소속/직책} — {만남 목적}\n\n" +
   "<b>[보고 건]</b>\n" +
-  "• [M/D] {보고자료명/회의명} — {핵심 내용 2~3개 압축}";
+  "• [M/D] {보고자료명/회의명} — {핵심 내용 2~3개 압축}\n" +
+  "대외정보 /info · 프로젝트 /project · 업무 브리핑 /brief";
 
 const MORNING_SYSTEM = PERSONA_STYLE + "\n\n" +
   "[작업] 지난 하루 대화를 읽고 사장이 출근길 30초에 파악하도록 정리. 각 항목 1줄.\n" +
@@ -255,7 +256,7 @@ export async function runBrief(env, chatId) {
   const meetings = uniqueRows(infoRows.filter(isMeetingRow).filter(isTodayOrFuture)).sort(byImminence).slice(0, 4);
   const reports = uniqueRows(workRows.filter(isReportRow).filter(isTodayOrFuture)).sort(byImminence).slice(0, 5);
 
-  const lines = ["브리핑 · " + todayText(), SEPARATOR, ""];
+  const lines = ["업무 브리핑 · " + todayText(), SEPARATOR, ""];
   lines.push("<b>[결정·확인 필요]</b>");
   if (decisions.length) {
     for (const row of decisions) lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
@@ -283,6 +284,7 @@ export async function runBrief(env, chatId) {
   }
   lines.push("");
   lines.push(SEPARATOR);
+  lines.push("대외정보 /info · 프로젝트 /project · 업무 브리핑 /brief");
 
   await sendLongMessage(env, chatId, lines.join("\n"));
 }

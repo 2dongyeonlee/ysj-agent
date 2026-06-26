@@ -1,6 +1,7 @@
 // project.js - compact project index and per-project item list.
 
 import { getProjectTimeline } from "./db.js";
+import { loadProjectKeywords } from "./insight.js";
 import { sendMessage } from "./telegram.js";
 import { stripHtml, issueDate, issueScore } from "./utils.js";
 
@@ -31,6 +32,13 @@ function displayProjectName(project) {
 
 function projectSlug(project) {
   return displayProjectName(project).replace(/<[^>]+>/g, "").trim();
+}
+
+function projHeaderName(project, knownSet) {
+  const disp = escapeHtml(displayProjectName(project));
+  return (knownSet && knownSet.has(normalizeProjectName(project)))
+    ? "<u>" + disp + "</u>"
+    : disp;
 }
 
 function isUnconfirmedSummary(summary) {
@@ -153,10 +161,10 @@ function addMapEntry(map, tag, row) {
   };
 }
 
-function formatOverviewGroup(groupNo, project, rows, map) {
+function formatOverviewGroup(groupNo, project, rows, map, knownSet) {
   const sorted = rows.slice().sort(sortRows);
   const shown = recentRows(sorted, 2);
-  const lines = [groupNo + ". <b>" + escapeHtml(displayProjectName(project)) + "</b>"];
+  const lines = [groupNo + ". <b>" + projHeaderName(project, knownSet) + "</b>"];
   let itemNo = 0;
   for (const row of shown) {
     itemNo++;
@@ -171,9 +179,9 @@ function formatOverviewGroup(groupNo, project, rows, map) {
   return lines.join("\n");
 }
 
-function formatFullGroup(groupNo, project, rows, map) {
+function formatFullGroup(groupNo, project, rows, map, knownSet) {
   const sorted = rows.slice().sort(sortRows);
-  const lines = [groupNo + ". <b>" + escapeHtml(displayProjectName(project)) + "</b> · 전체 " + sorted.length + "건", ""];
+  const lines = [groupNo + ". <b>" + projHeaderName(project, knownSet) + "</b> · 전체 " + sorted.length + "건", ""];
   let itemNo = 0;
   for (const row of sorted) {
     itemNo++;
@@ -220,8 +228,10 @@ export async function runProjectBriefing(env, chatId, days, name) {
   }
 
   const keys = Object.keys(groups).sort(function (a, b) { return displayProjectName(a).localeCompare(displayProjectName(b), "ko"); });
+  const known = await loadProjectKeywords(env);
+  const knownSet = new Set((known || []).map(function (r) { return normalizeProjectName(r.project); }));
   const lines = [
-    "<b>프로젝트</b>" + (hasName ? " · " + escapeHtml(displayProjectName(name)) : " · 최근 1주일"),
+    "<b>프로젝트</b>" + (hasName ? " · " + projHeaderName(name, knownSet) : " · 최근 1주일"),
     SEPARATOR,
     "",
   ];
@@ -230,11 +240,11 @@ export async function runProjectBriefing(env, chatId, days, name) {
   for (const key of keys) {
     groupNo++;
     lines.push(hasName
-      ? formatFullGroup(groupNo, key, groups[key], fullMap)
-      : formatOverviewGroup(groupNo, key, groups[key], fullMap));
+      ? formatFullGroup(groupNo, key, groups[key], fullMap, knownSet)
+      : formatOverviewGroup(groupNo, key, groups[key], fullMap, knownSet));
   }
   lines.push(SEPARATOR);
-  lines.push("대외정보 /info · 핵심 /brief");
+  lines.push("대외정보 /info · 프로젝트 /project · 업무 브리핑 /brief");
   lines.push(hasName
     ? "항목 보기: " + code("1-1 요약") + " 또는 " + code("1-1 자료")
     : "전체 목록: " + code("/project 프로젝트명") + " · 항목 보기: " + code("1-1 요약"));

@@ -67,7 +67,7 @@ const INFO_SYSTEM = `당신은 염성진 사장에게 대외정보를 보고하�
 • [M/D] {안건 1줄}
 
 ─────
-프로젝트 /project · 핵심 /brief`;
+대외정보 /info · 프로젝트 /project · 업무 브리핑 /brief`;
 const STOPWORDS = new Set([
   "보고요망", "관련", "통해", "대한", "대해", "하며", "하고", "있다", "있음", "중임",
   "필요", "강화", "추진", "가능성", "상황", "제기", "예정", "자료", "브리핑",
@@ -136,10 +136,10 @@ function dedupeIssues(rows) {
 function selectInfoItems(items) {
   const selected = [];
   for (const cat of INFO_CATEGORIES) {
-    const grouped = items.filter(function (row) { return row.category === cat.name; }).slice(0, 2);
+    const grouped = items.filter(function (row) { return row.category === cat.name; }).slice(0, 4);
     selected.push(...grouped);
   }
-  return selected.slice(0, 12);
+  return selected.slice(0, INFO_CATEGORIES.length * 4);
 }
 
 async function sendLongMessage(env, chatId, text) {
@@ -182,7 +182,7 @@ function cleanInfoOutput(text) {
     .replace(/ℹ️\s*/g, "")
     .replace(/^[ \t]*(?:🏢|🇰🇷|🌐|🏛|🗞)\s*<b>([^<]+)<\/b>/gm, "■ <b>$1</b>")
     .replace(/^[ \t]*(?:☑|■|\[)?\s*<b>\[?(정부|BH|국회|언론|글로벌|경쟁사)\]?<\/b>\]?/gm, "■ <b>$1</b>")
-    .replace(/프로젝트\s*\/project\s*·\s*핵심\s*\/brief/g, "프로젝트 /project · 핵심 /brief")
+    .replace(/(?:대외정보\s*\/info\s*·\s*)?프로젝트\s*\/project\s*·\s*(?:핵심|업무\s*브리핑)\s*\/brief(?:\s*·\s*간략모드)?/g, "대외정보 /info · 프로젝트 /project · 업무 브리핑 /brief")
     .trim();
 }
 
@@ -252,7 +252,7 @@ export async function runInfoBriefing(env, chatId, days) {
     lines.push("");
   }
   lines.push(SEPARATOR);
-  lines.push("프로젝트 /project · 핵심 /brief · 간략모드");
+  lines.push("대외정보 /info · 프로젝트 /project · 업무 브리핑 /brief");
 
   const out = greet + lines.join("\n");
   if (chatId) {
