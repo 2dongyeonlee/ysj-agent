@@ -149,7 +149,6 @@ export default {
     }
     // 평일 아침 브리핑.
     ctx.waitUntil((async function () {
-      await runMorningBriefing(env);
       await runInfoBriefing(env, null, 2);
       await runBriefAuto(env);
     })());
