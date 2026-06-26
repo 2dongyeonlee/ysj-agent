@@ -32,6 +32,7 @@ const INFO_SYSTEM = `당신은 염성진 사장에게 대외정보를 보고하�
 - 날짜는 원문에 명시된 사안일만 쓴다. 25/6처럼 일/월이면 6/25로 고친다. 30/0처럼 불가능한 날짜는 쓰지 말고 입력의 created 날짜 또는 "—"를 쓴다.
 - 분류는 정부 / BH / 국회 / 언론 / 글로벌 / 경쟁사 6개만 쓴다. 기타·내부 생성 금지.
 - 출력은 아래 양식만. 설명, 사족, 마크다운 ** 금지. 굵게는 HTML <b>만 사용.
+- 정부/BH/국회/언론/글로벌/경쟁사 6개 분류는 모두 출력한다. 해당 분류 내용이 없으면 "• -" 한 줄만 쓴다.
 - 각 카테고리 안에서 당사 직접 영향 건을 위로, 단순 인지 건은 끝에 "— 인지 수준"으로 짧게 쓴다.
 - 부등호(<, >)를 본문에 쓰지 말 것. "이상/이하/초과/미만"으로 표기한다.
 - 발신자 이름·약칭(SY, Yeom 등) 표기 금지. 중복 내용 병합. 구분선은 ─────만 사용. 불릿(•) 한 단계.
@@ -45,7 +46,6 @@ const INFO_SYSTEM = `당신은 염성진 사장에게 대외정보를 보고하�
 - 경쟁사: 삼성·B社·C社·파운드리·테슬라·평택 P5·용인클러스터 인력·HBM 경쟁/추격 등 당사 경쟁 동향
 
 [출력 양식]
-대외정보 · {오늘}
 ─────
 
 ■ <b>정부</b>
@@ -195,7 +195,7 @@ async function composeInfoWithClaude(env, items) {
   );
   const cleaned = cleanInfoOutput(out);
   // 성공 판정은 실제 출력 양식에 맞춘다. 헤더/구분선이 어긋나면 수동 폴백으로 빠진다.
-  if (!cleaned.includes("대외정보") || !cleaned.includes("─────")) return "";
+  if (!cleaned.includes("─────") || !cleaned.includes("■")) return "";
   return cleaned;
 }
 
@@ -213,9 +213,7 @@ export async function runInfoBriefing(env, chatId, days) {
   const period = days <= 1 ? "오늘"
     : days === 2 ? "어제~오늘"
       : "최근 " + days + "일";
-  const greet = !chatId
-    ? "<b>금일 대외정보 요약 보고드립니다. (" + period + ")</b>\n\n"
-    : "<b>대외정보 요약 (" + period + ")</b>\n\n";
+  const greet = "<b>대외정보 요약 보고 (" + period + ")</b>\n\n";
   const rows = await getInfoInsightsSince(env, kstSinceDb(days || 2), INFO_CATEGORIES.map(function (c) { return c.name; }));
   const items = dedupeIssues((rows || []).filter(function (r) { return r.category && r.summary; }).sort(recentFirst));
   const visibleItems = selectInfoItems(items);
@@ -240,13 +238,16 @@ export async function runInfoBriefing(env, chatId, days) {
     console.error("composeInfoWithClaude error", e && e.message);
   }
 
-  const lines = ["대외정보 · " + todayText(), SEPARATOR, ""];
+  const lines = [SEPARATOR, ""];
   for (const cat of INFO_CATEGORIES) {
     const grouped = visibleItems.filter(function (r) { return r.category === cat.name; });
-    if (!grouped.length) continue;
     lines.push("■ <b>" + cat.name + "</b>");
-    for (const row of grouped) {
-      lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary, 160));
+    if (grouped.length) {
+      for (const row of grouped) {
+        lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary, 160));
+      }
+    } else {
+      lines.push("• -");
     }
     lines.push("");
   }
