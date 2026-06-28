@@ -126,8 +126,8 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // 매분 Cron — 대기 중인 녹음 받아쓰기(STT). 웹훅보다 실행시간이 길어 긴 녹음도 처리.
-    if (event.cron === "* * * * *") {
+    // 2분마다 Cron — 대기 중인 녹음 받아쓰기·문서 처리. 빈 큐면 각 함수가 즉시 종료(KV 절약).
+    if (event.cron === "*/2 * * * *") {
       ctx.waitUntil((async function () {
         // 각 큐를 병렬 실행 — 녹음 STT가 길어도 PDF·텍스트 처리가 밀리지 않는다.
         await Promise.all([
