@@ -147,20 +147,22 @@ export async function searchAll(env, query) {
     } catch (e) { console.error("searchAll meeting", e.message); }
   }
 
-  const STOPWORDS = /^(요약|정리|현황|공유|해줘|해주세요|좀|알려줘|보고서|보고|회의|최근|오늘|관련|내용|어떻게|됐어|뭐|있어|찾아|줘)$/;
-  const kw = q.replace(/[?？!！.]/g, " ")
-    .trim().split(/\s+/)
+  const STOPWORDS = /^(요약|정리|현황|공유|해줘|해주세요|해주|좀|알려줘|알려|보고서|보고|회의|최근|오늘|관련|내용|어떻게|됐어|뭐|있어|있나|찾아|찾아줘|줘|부탁|대해|관해|에서|보여줘|보여)$/;
+  const rawWords = q.replace(/[?？!！.]/g, " ").trim().split(/\s+/)
+    .filter(function (w) { return w.length >= 2; });
+  const words = rawWords
     .map(function (w) { return w.replace(/(요약|정리|공유|보고)?해줘$/, ""); })
-    .filter(function (w) { return w.length >= 2 && !STOPWORDS.test(w); });
-  if (!kw.length) kw.push(q.slice(0, 8));
+    .filter(function (w) { return w.length >= 2; });
+  const kw = words.filter(function (w) { return !STOPWORDS.test(w); });
+  const finalKw = kw.length ? kw : (words.length ? words : rawWords);
 
   const out = [];
-  const likeM = kw.map(function () { return "text LIKE ?"; }).join(" OR ");
+  const likeM = finalKw.map(function () { return "text LIKE ?"; }).join(" OR ");
   try {
     const m = await env.DB.prepare(
       `SELECT 'msg' AS src, sender, text AS body, '' AS filename, '' AS doc_type, '' AS project, created_at
          FROM messages WHERE ${likeM} ORDER BY created_at DESC LIMIT 15`
-    ).bind(...kw.map(function (k) { return "%" + k + "%"; })).all();
+    ).bind(...finalKw.map(function (k) { return "%" + k + "%"; })).all();
     out.push(...(m.results || []));
   } catch (e) { console.error("searchAll msg", e.message); }
 
@@ -168,16 +170,16 @@ export async function searchAll(env, query) {
     const f = await env.DB.prepare(
       `SELECT 'file' AS src, sender, COALESCE(full_minutes, text) AS body, filename, doc_type, '' AS project, created_at
          FROM files WHERE (${likeM}) AND text != '' ORDER BY created_at DESC LIMIT 10`
-    ).bind(...kw.map(function (k) { return "%" + k + "%"; })).all();
+    ).bind(...finalKw.map(function (k) { return "%" + k + "%"; })).all();
     out.push(...(f.results || []));
   } catch (e) { console.error("searchAll file", e.message); }
 
   try {
-    const likeI = kw.map(function () { return "summary LIKE ?"; }).join(" OR ");
+    const likeI = finalKw.map(function () { return "summary LIKE ?"; }).join(" OR ");
     const i = await env.DB.prepare(
       `SELECT 'insight' AS src, sender, summary AS body, '' AS filename, '' AS doc_type, project, created_at
          FROM insights WHERE ${likeI} ORDER BY created_at DESC LIMIT 15`
-    ).bind(...kw.map(function (k) { return "%" + k + "%"; })).all();
+    ).bind(...finalKw.map(function (k) { return "%" + k + "%"; })).all();
     out.push(...(i.results || []));
   } catch (e) { console.error("searchAll insight", e.message); }
 
