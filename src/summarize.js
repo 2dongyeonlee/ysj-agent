@@ -312,7 +312,10 @@ export async function handleSenderQuery(env, chatId, query) {
 
 export async function handleQuery(env, chatId, query) {
   const hits = await searchAll(env, query);
-  if (!hits.length) return false;
+  if (!hits.length) {
+    await sendMessage(env, chatId, "관련 자료를 찾지 못했습니다. 전체 업무는 /brief, 대외정보는 /info 를 써보세요.");
+    return true;
+  }
 
   const ctx = hits.map(function (h) {
     const tag = h.doc_type === "meeting" ? "[회의록]"

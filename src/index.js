@@ -499,6 +499,14 @@ async function route(env, msg) {
     return summarizeLatest(env, chatId, kw);
   }
   const cleanText = text;
+  const isGeneralBrief = /^(브리핑|업무\s*브리핑|오늘\s*(업무|일정)|주요\s*(내용|사항)\s*(요약|정리)?|전체\s*요약|요약\s*(해줘|해주세요|좀))$/.test(text.trim());
+  if ((isDM || isMentioned) && isGeneralBrief) {
+    return runBrief(env, chatId);
+  }
+  const isGeneralInfo = /^(대외\s*정보|대외\s*동향|정보\s*브리핑|오늘\s*(대외|정보|뉴스))/.test(text.trim());
+  if ((isDM || isMentioned) && isGeneralInfo) {
+    return runInfoBriefing(env, chatId, 2);
+  }
   if ((isDM || isMentioned) && cleanText && cleanText.length >= 5
       && !text.startsWith("/") && !isAudioMsg(msg.reply_to_message)) {
     if (await handleSenderQuery(env, chatId, cleanText)) return;
