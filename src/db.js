@@ -474,7 +474,10 @@ export async function getProjectTimeline(env, project, sinceIso) {
   const name = String(project || "").trim();
   let where = "i.project != '' AND i.project IS NOT NULL";
   const binds = [];
-  if (name) { where += " AND i.project LIKE ?"; binds.push("%" + name + "%"); }
+  if (name) {
+    where += " AND (i.project LIKE ? OR i.summary LIKE ?)";
+    binds.push("%" + name + "%", "%" + name + "%");
+  }
   if (sinceIso) { where += " AND i.created_at >= ?"; binds.push(sinceIso); }
   const { results } = await env.DB.prepare(
     "SELECT i.schedule, i.project, i.summary, i.people, i.sender, i.created_at, i.source_ref, " +
