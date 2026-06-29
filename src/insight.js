@@ -324,7 +324,7 @@ export async function classifyStored(env, { text, filename, caption }) {
   if (body.length < 10) return { project: "", category: "" };
   let parsed;
   try {
-    const raw = await callClaude(env, "내용:\n" + body.slice(0, 4000), EXTRACT_SYSTEM + projectHints(keywords), MODEL_FAST, 500);
+    const raw = await callClaude(env, "내용:\n" + body.slice(0, 8000), EXTRACT_SYSTEM + projectHints(keywords), MODEL_FAST, 1200);
     parsed = JSON.parse(cleanJson(raw));
   } catch (e) {
     console.error("classifyStored parse error", e && e.message);
@@ -347,7 +347,7 @@ export async function resummarizeText(env, text) {
   const keywords = await loadProjectKeywords(env);
   let parsed;
   try {
-    const raw = await callClaude(env, "내용:\n" + body.slice(0, 6000), EXTRACT_SYSTEM + projectHints(keywords), MODEL_FAST, 500);
+    const raw = await callClaude(env, "내용:\n" + body.slice(0, 8000), EXTRACT_SYSTEM + projectHints(keywords), MODEL_FAST, 1200);
     parsed = JSON.parse(cleanJson(raw));
   } catch (e) {
     console.error("resummarizeText parse error", e && e.message);
@@ -372,13 +372,13 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
   try {
     const body = String(text || "").trim();
     if (body.length < 10) return null;
-    const readText = body.slice(0, 4000);
+    const readText = body.slice(0, 8000);
     const cap = String(caption || "").trim();
     const fname = String(filename || "").trim();
 
     // 등록 프로젝트 목록을 프롬프트에 주입해 LLM 이 맥락으로 프로젝트를 인식하게 한다.
     const keywords = await loadProjectKeywords(env);
-    const raw = await callClaude(env, "내용:\n" + readText, EXTRACT_SYSTEM + projectHints(keywords), MODEL_FAST, 900);
+    const raw = await callClaude(env, "내용:\n" + readText, EXTRACT_SYSTEM + projectHints(keywords), MODEL_FAST, 1200);
     let parsed;
     try {
       parsed = JSON.parse(cleanJson(raw));
