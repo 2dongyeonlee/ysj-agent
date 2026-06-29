@@ -313,7 +313,13 @@ export async function handleSenderQuery(env, chatId, query) {
 export async function handleQuery(env, chatId, query) {
   const hits = await searchAll(env, query);
   if (!hits.length) {
-    await sendMessage(env, chatId, "관련 자료를 찾지 못했습니다. 전체 업무는 /brief, 대외정보는 /info 를 써보세요.");
+    await sendMessage(env, chatId,
+      "관련 자료를 찾지 못했습니다.\n\n" +
+      "이렇게 해보세요:\n" +
+      "• <b>주요 업무 브리핑</b> → <code>/brief</code> 또는 \"업무 브리핑해줘\"\n" +
+      "• <b>대외정보 동향</b> → <code>/info</code> 또는 \"대외정보 브리핑해줘\"\n" +
+      "• <b>특정 자료 검색</b> → \"용인 관련 내용\", \"ADR 어떻게 됐어\" 처럼 키워드로\n" +
+      "• <b>회의 요약</b> → \"이번주 회의 요약\"");
     return true;
   }
 

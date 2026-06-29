@@ -53,7 +53,7 @@ const BRIEF_SYSTEM = PERSONA_STYLE + "\n\n" +
   "─────\n\n" +
   "■ <b>주요 정황</b>\n" +
   "• <b>{소제목}</b>: {배경·동향 2~3줄}\n" +
-  "(주요 정황은 야권 공세·정부 대응·언론 프레임 등 배경. 소제목은 반드시 <b>굵게</b>. 관련 자료 없으면 이 섹션 전체 생략)\n\n" +
+  "(소제목 반드시 <b>굵게</b>. 야권 공세·정부 대응·언론 프레임 등 배경. 관련 자료 없으면 섹션 생략)\n\n" +
   "대외정보 /info · 프로젝트 /project · 업무 브리핑 /brief";
 
 const MORNING_SYSTEM = PERSONA_STYLE + "\n\n" +
