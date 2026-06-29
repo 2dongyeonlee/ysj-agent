@@ -244,7 +244,7 @@ const INFO_KEYWORD_RULES = [
 
 export function classifyInfoCategory(text, fallback) {
   const normalized = normalizeCategory(fallback);
-  if (normalized && normalized !== "기타" && normalized !== "내부") return normalized;
+  if (normalized && normalized !== "기타") return normalized;
   const body = String(text || "");
   if (/O\/I|OI|티미팅|회의체|위클리|내부 보고|운영계획|조직문화|Comm\.?\s*위|커뮤니케이션총괄/.test(body)) return "내부";
   for (const rule of INFO_KEYWORD_RULES) {
