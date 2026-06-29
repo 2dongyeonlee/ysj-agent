@@ -32,6 +32,7 @@ const INFO_SYSTEM = `당신은 염성진 사장에게 대외정보를 보고하�
 - 날짜는 원문에 명시된 사안일만 쓴다. 25/6처럼 일/월이면 6/25로 고친다. 30/0처럼 불가능한 날짜는 쓰지 말고 입력의 created 날짜 또는 "—"를 쓴다.
 - 분류는 정부 / BH / 국회 / 언론 / 글로벌 / 경쟁사 6개만 쓴다. 기타·내부 생성 금지.
 - 출력은 아래 양식만. 설명, 사족, 마크다운 ** 금지. 굵게는 HTML <b>만 사용.
+- 사람 이름·직책(장관·실장·의원·CEO 등)은 <b>굵게</b>. 예: <b>김성환 장관</b>, <b>나경원 의원</b>.
 - 정부/BH/국회/언론/글로벌/경쟁사 6개 분류는 모두 출력한다. 해당 분류 내용이 없으면 "• -" 한 줄만 쓴다.
 - 각 카테고리 안에서 당사 직접 영향 건을 위로, 단순 인지 건은 끝에 "— 인지 수준"으로 짧게 쓴다.
 - 부등호(<, >)를 본문에 쓰지 말 것. "이상/이하/초과/미만"으로 표기한다.
@@ -43,7 +44,7 @@ const INFO_SYSTEM = `당신은 염성진 사장에게 대외정보를 보고하�
 - 글로벌: 해외 정부/기업/정책, 미국·중국·일본·대만·EU, ASML·NVIDIA·Anthropic 등
 - 국회: 의원실·의원·정당·상임위·법안·입법·정책위
 - 언론: 기자·기사·보도·인터뷰·광고·PR·방송·미디어 대응
-- 경쟁사: 삼성·B社·C社·파운드리·테슬라·평택 P5·용인클러스터 인력·HBM 경쟁/추격 등 당사 경쟁 동향
+- 경쟁사: 삼성·B社·C社·TSMC·Micron·마이크론·CXMT·YMTC·키오시아·파운드리·테슬라·평택 P5·용인클러스터 인력·HBM 경쟁/추격 등 당사 경쟁 동향
 
 [출력 양식]
 ─────
@@ -210,9 +211,11 @@ function withTimeout(promise, ms, message) {
 
 export async function runInfoBriefing(env, chatId, days) {
   days = Math.max(1, parseInt(days || 2, 10) || 2);
-  const period = days <= 1 ? "오늘"
-    : days === 2 ? "어제~오늘"
-      : "최근 " + days + "일";
+  const kstMd = function (off) {
+    const d = new Date(Date.now() + 9 * 3600 * 1000 - off * 86400000);
+    return (d.getUTCMonth() + 1) + "/" + d.getUTCDate();
+  };
+  const period = days <= 1 ? kstMd(0) : kstMd(days - 1) + "~" + kstMd(0);
   const greet = "<b>대외정보 요약 보고 (" + period + ")</b>\n\n";
   const rows = await getInfoInsightsSince(env, kstSinceDb(days || 2), INFO_CATEGORIES.map(function (c) { return c.name; }));
   const items = dedupeIssues((rows || []).filter(function (r) { return r.category && r.summary; }).sort(recentFirst));

@@ -236,8 +236,8 @@ export function normalizeCategory(value) {
 const INFO_KEYWORD_RULES = [
   { category: "BH", re: /BH|대통령실|대통령|국정상황실|정무수석|비서실장|수석비서관|총리|인선/ },
   { category: "언론", re: /언론|기사|보도|취재|기자|인터뷰|PR|홍보|광고|방송|유튜브|타임스퀘어|CNBC|블룸버그TV|로이터|워싱턴포스트|중앙일보|조선일보|미디어/ },
-  { category: "경쟁사", re: /경쟁사|B社|C社|삼성전자|삼성|파운드리|테슬라|Tesla|Taylor\s*Fab|평택|P5\b|용인클러스터|공사인력|인력유출|HBM4E|HBM 경쟁|추격/ },
-  { category: "글로벌", re: /글로벌|해외|외신|미국|중국|일본|대만|EU|유럽|워싱턴|뉴욕|통상|관세|수출규제|상무부|ASML|NVIDIA|Microsoft|AWS|Anthropic|Micron|CXMT|UNEP|GGGI|나스닥|ADR/ },
+  { category: "경쟁사", re: /경쟁사|B社|C社|삼성전자|삼성|파운드리|테슬라|Tesla|Taylor\s*Fab|평택|P5\b|용인클러스터|공사인력|인력유출|HBM4E|HBM 경쟁|추격|TSMC|Micron|마이크론|CXMT|YMTC|창신|키오시아|Kioxia/ },
+  { category: "글로벌", re: /글로벌|해외|외신|미국|중국|일본|대만|EU|유럽|워싱턴|뉴욕|통상|관세|수출규제|상무부|ASML|NVIDIA|Microsoft|AWS|Anthropic|UNEP|GGGI|나스닥|ADR/ },
   { category: "국회", re: /국회|의원실|국회의원|상임위|법안|정당|민주당|국민의힘|정책위의장|입법|보좌관|국회법/ },
   { category: "정부", re: /정부|장관|차관|부처|산업부|산업통상자원부|고용노동부|고용부|기후부|환경부|공정위|공정거래위원회|과기부|국토부|교육부|규제기관|인수위|도지사|시장|산단|클러스터|정책|규제/ },
 ];
