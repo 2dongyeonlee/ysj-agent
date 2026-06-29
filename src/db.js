@@ -184,17 +184,19 @@ export async function searchAll(env, query) {
 
 // ===== 파일 (기능2: 자료 전달) =====
 export async function saveFile(env, f) {
-  if (f.file_id && f.chat_id) {
+  const fileId = f.file_id || f.fileId || "";
+  const chatId = f.chat_id || f.chatId || "";
+  if (fileId && chatId) {
     const existing = await env.DB.prepare(
       `SELECT id FROM files WHERE file_id = ? AND chat_id = ? LIMIT 1`
-    ).bind(f.file_id || "", String(f.chat_id)).first();
+    ).bind(String(fileId), String(chatId)).first();
     if (existing) return existing.id;
   }
   await env.DB.prepare(
     `INSERT INTO files (chat_id, file_id, r2_key, filename, text, sender, doc_type, full_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
-    String(f.chat_id),
-    f.file_id || "",
+    String(chatId),
+    fileId,
     f.r2_key || "",
     f.filename || "",
     f.text || "",

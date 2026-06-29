@@ -474,10 +474,9 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
 
 export async function runReindex(env, chatId) {
   const rows = await env.DB.prepare(
-    `SELECT f.* FROM files f
-     WHERE f.process_status='done' AND length(f.text) > 50
-       AND NOT EXISTS (SELECT 1 FROM insights i WHERE i.source_ref = f.file_id)
-     ORDER BY f.id DESC LIMIT 20`
+    `SELECT * FROM files WHERE process_status='done' AND length(text) > 50
+       AND NOT EXISTS (SELECT 1 FROM insights i WHERE i.source_ref = files.file_id)
+     ORDER BY id DESC LIMIT 15`
   ).all();
   let done = 0;
   for (const f of (rows.results || [])) {
@@ -489,12 +488,12 @@ export async function runReindex(env, chatId) {
         text: f.text,
         sender: f.sender || "",
         filename: f.filename || "",
-        receivedAt: new Date(f.created_at),
+        receivedAt: new Date(f.created_at || Date.now()),
       });
       done++;
     } catch (e) {
       console.error("reindex", f.id, e && e.message);
     }
   }
-  return sendMessage(env, chatId, "재분류 완료: " + done + "건 (남으면 /reindex 반복)");
+  return sendMessage(env, chatId, "재분류 " + done + "건 완료. 남으면 /reindex 반복.");
 }
