@@ -471,3 +471,30 @@ export async function extractInsight(env, { chatId, sourceType, sourceRef, text,
     return null;
   }
 }
+
+export async function runReindex(env, chatId) {
+  const rows = await env.DB.prepare(
+    `SELECT f.* FROM files f
+     WHERE f.process_status='done' AND length(f.text) > 50
+       AND NOT EXISTS (SELECT 1 FROM insights i WHERE i.source_ref = f.file_id)
+     ORDER BY f.id DESC LIMIT 20`
+  ).all();
+  let done = 0;
+  for (const f of (rows.results || [])) {
+    try {
+      await extractInsight(env, {
+        chatId: f.chat_id,
+        sourceType: "file",
+        sourceRef: f.file_id,
+        text: f.text,
+        sender: f.sender || "",
+        filename: f.filename || "",
+        receivedAt: new Date(f.created_at),
+      });
+      done++;
+    } catch (e) {
+      console.error("reindex", f.id, e && e.message);
+    }
+  }
+  return sendMessage(env, chatId, "재분류 완료: " + done + "건 (남으면 /reindex 반복)");
+}

@@ -9,7 +9,7 @@ import { handleVoice, makeMinutesFromStored, runVoiceQueue, summarizeRecentMessa
 import { sendMessage, sendDocument, sendDocumentBytes } from "./telegram.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
 import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks, checkInsights, dedupInsights, getResummaryTargets, updateInsightSummary, qLen, qPush } from "./db.js";
-import { resummarizeText } from "./insight.js";
+import { resummarizeText, runReindex } from "./insight.js";
 import { splitBriefingSections } from "./collect.js";
 import { runReclass } from "./reclass.js";
 import { extractText } from "./docparse.js";
@@ -246,6 +246,10 @@ async function route(env, msg) {
   if (text === "/reclass" || text.startsWith("/reclass ")) {
     if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한이 없습니다. /whoami 로 chat_id 확인 후 ADMIN_CHAT_ID 에 등록하세요.");
     return runReclass(env, chatId, text.indexOf("reset") !== -1);
+  }
+  if (text === "/reindex" || text.startsWith("/reindex ")) {
+    if (!isAdmin(env, msg)) return sendMessage(env, chatId, "권한 없음");
+    return runReindex(env, chatId);
   }
 
   // 저장 점검(진단용, 권한자만): 최근 저장 항목의 분류·발신자·경로를 그대로 보여준다.
