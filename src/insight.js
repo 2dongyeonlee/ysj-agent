@@ -239,7 +239,7 @@ const INFO_KEYWORD_RULES = [
   { category: "학계", re: /교수|박사|석학|학계|자문위원|연구진|논문|학회|싱크탱크|KAIST|서울대|성균관대|한양대|연세대|고려대|포스텍/ },
   { category: "경쟁사", re: /경쟁사|B社|C社|삼성전자|삼성|파운드리|테슬라|Tesla|Taylor\s*Fab|평택|P5\b|용인클러스터|공사인력|인력유출|HBM4E|HBM 경쟁|추격|TSMC|Micron|마이크론|CXMT|YMTC|창신|키오시아|Kioxia/ },
   { category: "글로벌", re: /글로벌|해외|외신|미국|중국|일본|대만|EU|유럽|워싱턴|뉴욕|통상|관세|수출규제|상무부|ASML|NVIDIA|Microsoft|AWS|Anthropic|UNEP|GGGI|나스닥|ADR/ },
-  { category: "국회", re: /국회|의원실|국회의원|상임위|법안|정당|민주당|국민의힘|정책위의장|입법|보좌관|국회법/ },
+  { category: "국회", re: /국회|의원실|국회의원|상임위|법안|정당|민주당|국민의힘|정책위의장|입법|보좌관|국회법|나경원|이준석|안철수|한동훈|장동혁|이정현|윤상현|추경호|권영진|박지원|윤희숙/ },
   { category: "정부", re: /정부|장관|차관|부처|산업부|산업통상자원부|고용노동부|고용부|기후부|환경부|공정위|공정거래위원회|과기부|국토부|교육부|규제기관|인수위|도지사|시장|산단|클러스터|정책|규제/ },
 ];
 
@@ -248,6 +248,7 @@ export function classifyInfoCategory(text, fallback) {
   if (normalized && normalized !== "기타") return normalized;
   const body = String(text || "");
   if (/O\/I|OI|티미팅|회의체|위클리|내부 보고|운영계획|조직문화|Comm\.?\s*위|커뮤니케이션총괄/.test(body)) return "내부";
+  if (/(자사|당사|SK하이닉스).*(광고|홍보|마케팅|캠페인)/.test(body)) return "내부";
   for (const rule of INFO_KEYWORD_RULES) {
     if (rule.re.test(body)) return rule.category;
   }
