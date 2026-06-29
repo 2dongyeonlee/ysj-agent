@@ -1,6 +1,6 @@
 // index.js — entry point. routing only. Bot stays silent unless explicitly called.
 import { collectMessage, runFileProcessQueue } from "./collect.js";
-import { runMorningBriefing, runBrief, runBriefAuto } from "./briefing.js";
+import { runBrief, runBriefAuto } from "./briefing.js";
 import { enqueueDocumentSummary, runDocumentSummaryQueue, summarizeFile, summarizeLatest, smartReplyRequest, handleSenderQuery, handleQuery } from "./summarize.js";
 import { handleQA } from "./qa.js";
 import { runInfoBriefing } from "./info.js";
@@ -137,14 +137,6 @@ export default {
           runFileProcessQueue(env).catch(function (e) { console.error("file process queue error", (e && e.stack) || e); }),
         ]);
       })());
-      return;
-    }
-    if (event.cron === "0 5 * * *") {
-      ctx.waitUntil(runInfoBriefing(env, null, 2));
-      return;
-    }
-    if (event.cron === "40 7 * * *") {
-      ctx.waitUntil(runBriefAuto(env));
       return;
     }
     // 평일 아침 브리핑.

@@ -357,11 +357,14 @@ function minutesTargetChat(env, fallbackChatId) {
   return String(fallbackChatId || (env && env.BRIEFING_TARGET_ID) || "");
 }
 
-// 매분 Cron 이 호출 — 대기 중인 녹음 1건을 받아쓰기. Cron 핸들러는 웹훅보다 실행시간이 길어
+// 2분마다 Cron 이 호출 — 대기 중인 녹음 1건을 받아쓰기. Cron 핸들러는 웹훅보다 실행시간이 길어
 // 긴 녹음도 처리 가능. 동시 실행은 KV 락으로 막고, 반복 실패는 시도 횟수로 끊는다.
 export async function runVoiceQueue(env) {
   // 빈 큐면 lock(KV put) 을 쓰기 전에 즉시 종료한다 — 처리할 게 있을 때만 lock 획득(KV 절약).
-  let hasWork = (await qLen(env, "mj")) > 0;
+  const mjLen = await qLen(env, "mj");
+  const vqLen = await qLen(env, "vq");
+  const fpLen = await qLen(env, "fp");
+  let hasWork = !!(mjLen || vqLen || fpLen);
   if (!hasWork && env.ASSEMBLYAI_API_KEY) {
     const p = await env.DB.prepare(
       "SELECT 1 FROM files WHERE aai_id IS NOT NULL AND aai_id != '' AND (text IS NULL OR text = '') " +

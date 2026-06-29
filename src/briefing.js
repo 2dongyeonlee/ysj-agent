@@ -74,8 +74,8 @@ function sinceDaysIso(days) {
 }
 
 function todayText() {
-  const d = new Date();
-  return (d.getMonth() + 1) + "/" + d.getDate();
+  const d = new Date(Date.now() + 9 * 3600 * 1000);
+  return (d.getUTCMonth() + 1) + "/" + d.getUTCDate();
 }
 
 function textOf(row) {
