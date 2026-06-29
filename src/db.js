@@ -147,9 +147,11 @@ export async function searchAll(env, query) {
     } catch (e) { console.error("searchAll meeting", e.message); }
   }
 
-  const stop = /(알려줘|요약해줘|요약|정리해줘|정리|해줘|뭐야|어떻게|언제|관련|내용|좀|the)/g;
-  const kw = q.replace(/[?？!！.]/g, " ").replace(stop, " ")
-    .trim().split(/\s+/).filter(function (w) { return w.length >= 2; });
+  const STOPWORDS = /^(요약|정리|현황|공유|해줘|해주세요|좀|알려줘|보고서|보고|회의|최근|오늘|관련|내용|어떻게|됐어|뭐|있어|찾아|줘)$/;
+  const kw = q.replace(/[?？!！.]/g, " ")
+    .trim().split(/\s+/)
+    .map(function (w) { return w.replace(/(요약|정리|공유|보고)?해줘$/, ""); })
+    .filter(function (w) { return w.length >= 2 && !STOPWORDS.test(w); });
   if (!kw.length) kw.push(q.slice(0, 8));
 
   const out = [];
