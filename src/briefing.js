@@ -44,11 +44,11 @@ const BRIEF_SYSTEM = PERSONA_STYLE + "\n\n" +
   "- 굵게는 HTML <b>만 사용. 마크다운 ** 금지.\n" +
   "- 발신자 이름·약칭(SY, Yeom 등) 표기 금지. 중복 내용 병합. 구분선은 ─────만 사용. 불릿(•) 한 단계.\n\n" +
   "업무 브리핑 · {오늘}\n" +
-  "<b>[결정·확인 필요]</b>\n" +
+  "■ <b>확인필요 사항</b>\n" +
   "• [M/D] {사장이 결정/확인할 내용}\n\n" +
-  "<b>[만남(외부)]</b>\n" +
+  "■ <b>Meeting</b>\n" +
   "• [M/D] <b>{외부 인물}</b> {소속/직책} — {만남 목적}\n\n" +
-  "<b>[보고 건]</b>\n" +
+  "■ <b>보고 안건</b>\n" +
   "• [M/D] {보고자료명/회의명} — {핵심 내용 2~3개 압축}\n" +
   "대외정보 /info · 프로젝트 /project · 업무 브리핑 /brief";
 
@@ -188,7 +188,7 @@ function cleanBriefOutput(text) {
     .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
     .replace(/<br\s*\/?>/gi, "\n")
     .trim();
-  if (!out.includes("브리핑") || !out.includes("[보고 건]")) return "";
+  if (!out.includes("브리핑") || !out.includes("보고 안건")) return "";
   return out;
 }
 
@@ -257,7 +257,7 @@ export async function runBrief(env, chatId) {
   const reports = uniqueRows(workRows.filter(isReportRow).filter(isTodayOrFuture)).sort(byImminence).slice(0, 5);
 
   const lines = ["업무 브리핑 · " + todayText(), SEPARATOR, ""];
-  lines.push("<b>[결정·확인 필요]</b>");
+  lines.push("■ <b>확인필요 사항</b>");
   if (decisions.length) {
     for (const row of decisions) lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
   } else {
@@ -265,7 +265,7 @@ export async function runBrief(env, chatId) {
   }
   lines.push("");
 
-  lines.push("<b>[만남(외부)]</b>");
+  lines.push("■ <b>Meeting</b>");
   if (meetings.length) {
     for (const row of meetings) {
       const people = externalPeople(row).map(function (p) { return "<b>" + p + "</b>"; }).join(" · ");
@@ -276,7 +276,7 @@ export async function runBrief(env, chatId) {
   }
   lines.push("");
 
-  lines.push("<b>[보고 건]</b>");
+  lines.push("■ <b>보고 안건</b>");
   if (reports.length) {
     for (const row of reports) lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary) + senderTag(row));
   } else {

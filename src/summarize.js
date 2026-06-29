@@ -36,18 +36,17 @@ const SUMMARY_SYSTEM = PERSONA_STYLE + "\n\n" + `당신은 염성진 사장 보�
 ■ <b>배경</b>
 맥락 1줄
 
-■ <b>주요 내용</b>
-- 핵심 (구체값·숫자 포함)
-- 핵심
+■ <b>주요 안건</b>
+- 회의별/주제별 안건 묶음
 
 ■ <b>Action Item</b>
 - 담당/기한 액션, 없으면 '없음'
 
-■ <b>일정</b>
-- 명시된 날짜·마감, 없으면 '없음'
+■ <b>주요 내용</b>
+- 핵심 결정·수치·쟁점
 
-■ <b>참석/관계자</b>
-- 인물·소속, 없으면 '미상'`;
+■ <b>주요 일정</b>
+- 날짜순 일정, 없으면 '없음'`;
 
 function isMeetingMemoFile(msg, text) {
   const filename = (msg.document && msg.document.file_name) || "";
@@ -166,7 +165,7 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false, optio
     } catch (e) {
       console.error("meeting document minutes error", e && e.message);
       minutes = {
-        short: "■ <b>회의 메모</b>\n─────\n■ <b>결정 필요</b>\n- 없음\n\n■ <b>안건</b>\n1. 음성 메모 문서 — 회의록 생성에 실패해 원문 일부만 저장됨.\n   → 미결: 원문 재확인 필요.\n\n■ <b>후속조치</b>\n- 없음\n─────\n전체 회의록 필요 시 /minutes",
+        short: "■ <b>배경</b>\n- 회의록 생성에 실패해 원문 일부만 저장됨.\n\n─────\n\n■ <b>주요 안건</b>\n• <b>음성 메모 문서</b>\n  - 원문 재확인 필요.\n\n─────\n\n■ <b>주요 내용</b>\n- 전사 내용 확인 필요.\n\n─────\n\n■ <b>Action Item</b>\n- 없음\n─────\n전체 회의록 필요 시 /minutes",
         full: text.slice(0, 4000),
       };
     }
@@ -327,7 +326,7 @@ export async function handleQuery(env, chatId, query) {
     "사장의 질문에 대해 아래 검색된 사내 자료(회의록·메시지·정보)를 종합해 보고용으로 답하라.\n" +
     "여러 자료를 통합하고 같은 사안은 합친다. 회의·자료가 여러 건이면 흐름을 보인다.\n" +
     "자료에 없으면 '관련 자료를 찾지 못했습니다'라 하고 절대 지어내지 말 것.\n" +
-    "형식: ■ <b>핵심</b> / ■ <b>주요 내용</b>(불릿) / ■ <b>챙길 것</b>(해당 시).\n" +
+    "형식: ■ <b>핵심</b> / ■ <b>주요 내용</b>(불릿) / ■ <b>Action Item</b>(해당 시에만, 없으면 생략).\n" +
     "이모지·마크다운 금지, HTML <b>만. 구분선 ─────.";
 
   const prompt = "[질문]\n" + query + "\n\n[검색된 자료]\n" + ctx.slice(0, 14000);
@@ -377,7 +376,7 @@ export async function smartReplyRequest(env, chatId, repliedMsg, instruction) {
     "당신은 염성진 사장 보고 비서다. 사용자 요청을 그대로 이해해 [주 자료]를 처리하라. " +
     "[참고 자료]는 관련 맥락으로만 활용하고 없으면 무시한다. " +
     "이모지·마크다운 금지, HTML <b>만 사용. 표가 필요하면 줄/구분선으로 텔레그램에서 보기 좋게. " +
-    "요청에 형식 지정이 없으면 다음 양식: ■ <b>배경</b> / ■ <b>주요 내용</b> / ■ <b>Action Item</b> / ■ <b>일정</b> / ■ <b>참석/관계자</b>. " +
+    "요청에 형식 지정이 없으면 다음 양식: ■ <b>배경</b> / ■ <b>주요 안건</b> / ■ <b>주요 내용</b> / ■ <b>Action Item</b> / ■ <b>주요 일정</b>. " +
     "자료에 없는 내용은 지어내지 말 것." +
     "\n[중대] 제공된 자료/맥락에 실제로 있는 내용만 쓴다. 없는 사실을 지어내지 말고, 근거 자료가 없으면 '관련 자료를 찾지 못했습니다'라고 답하라.";
   const prompt = "[사용자 요청]\n" + instruction +
@@ -417,7 +416,7 @@ export async function searchAndSummarize(env, chatId, text) {
   const merged = rows.map(function (r) { return "[" + (r.filename || "자료") + "]\n" + r.text; }).join("\n\n").slice(0, 10000);
   const sys = PERSONA_STYLE + "\n\n" +
     "당신은 염성진 사장 보고 비서다. 아래 자료를 다음 양식으로 요약하라. " +
-    "■ <b>배경</b> / ■ <b>주요 내용</b> / ■ <b>Action Item</b> / ■ <b>일정</b> / ■ <b>참석/관계자</b>. " +
+    "■ <b>배경</b> / ■ <b>주요 안건</b> / ■ <b>주요 내용</b> / ■ <b>Action Item</b> / ■ <b>주요 일정</b>. " +
     "이모지·마크다운 금지, HTML <b>만. " +
     "[중대] 아래 제공된 자료에 실제로 있는 내용만 쓴다. 자료에 없는 사실·수치·일정·발언을 절대 지어내지 마라. " +
     "제공된 자료가 요청과 무관하면 '요청과 일치하는 자료를 찾지 못했습니다'라고만 답하라.";
