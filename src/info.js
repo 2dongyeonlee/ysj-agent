@@ -34,7 +34,7 @@ const INFO_SYSTEM = `당신은 염성진 사장에게 대외정보를 보고하�
 - 분류는 정부 / 국회 / BH / 언론 / 학계 / 글로벌 / 경쟁사 7개만 쓴다. 기타·내부 생성 금지.
 - 출력은 아래 양식만. 설명, 사족, 마크다운 ** 금지. 굵게는 HTML <b>만 사용.
 - 사람 이름·직책(장관·실장·의원·CEO 등)은 <b>굵게</b>. 예: <b>김성환 장관</b>, <b>나경원 의원</b>.
-- 정부/국회/BH/언론/학계/글로벌/경쟁사 7개 분류는 모두 출력한다. 해당 분류 내용이 없으면 "• -" 한 줄만 쓴다.
+- 내용이 있는 분류만 출력한다. 내용 없는 분류는 생략한다.
 - 각 카테고리 안에서 당사 직접 영향 건을 위로, 단순 참고 건은 뒤에 둔다.
 - 부등호(<, >)를 본문에 쓰지 말 것. "이상/이하/초과/미만"으로 표기한다.
 - 발신자 이름·약칭(SY, Yeom 등) 표기 금지. 중복 내용 병합. 구분선은 ─────만 사용. 불릿(•) 한 단계.
@@ -248,16 +248,19 @@ export async function runInfoBriefing(env, chatId, days) {
   }
 
   const lines = [SEPARATOR, ""];
+  let shownCats = 0;
   for (const cat of INFO_CATEGORIES) {
     const grouped = visibleItems.filter(function (r) { return r.category === cat.name; });
-    lines.push("■ <b>" + cat.name + "</b>");
-    if (grouped.length) {
-      for (const row of grouped) {
-        lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary, 160));
-      }
-    } else {
-      lines.push("• -");
+    if (!grouped.length) continue;
+    lines.push("▍<b>" + cat.name + "</b>");
+    for (const row of grouped) {
+      lines.push("• [" + issueDate(row) + "] " + oneLine(row.summary, 160));
     }
+    lines.push("");
+    shownCats++;
+  }
+  if (shownCats === 0) {
+    lines.push("금일 특이 대외정보 없음");
     lines.push("");
   }
   lines.push(SEPARATOR);
