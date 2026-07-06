@@ -615,8 +615,12 @@ export async function getIdentityReport(env) {
     ).all()).results || [];
   } catch (e) { console.error("identity senders error", e && e.message); }
   try {
+    // 각 방의 대표 발신인도 함께(개인 DM 방이면 chat_id 가 곧 그 사람의 텔레그램 id).
     rooms = (await env.DB.prepare(
-      "SELECT chat_id, COUNT(*) AS n, MAX(created_at) AS last FROM messages GROUP BY chat_id ORDER BY n DESC LIMIT 40"
+      "SELECT m.chat_id AS chat_id, COUNT(*) AS n, MAX(m.created_at) AS last, " +
+      "(SELECT sender FROM messages m2 WHERE m2.chat_id = m.chat_id AND sender != '' AND sender != 'Yeom agent' " +
+      " GROUP BY sender ORDER BY COUNT(*) DESC LIMIT 1) AS top_sender " +
+      "FROM messages m GROUP BY m.chat_id ORDER BY n DESC LIMIT 40"
     ).all()).results || [];
   } catch (e) { console.error("identity rooms error", e && e.message); }
   try {

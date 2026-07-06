@@ -200,12 +200,17 @@ async function route(env, msg) {
       return (i + 1) + ". " + (r.sender || "(빈값)") + " — " + r.n + "건";
     });
     const rLines = rep.rooms.map(function (r) {
-      return "• <code>" + r.chat_id + "</code> — " + r.n + "건 (마지막 " + String(r.last || "").slice(0, 10) + ")";
+      const isDM = !String(r.chat_id).startsWith("-");
+      const who = isDM
+        ? (r.top_sender ? " = <b>" + r.top_sender + "</b> (개인 id)" : " (개인 방)")
+        : " (그룹)";
+      return "• <code>" + r.chat_id + "</code>" + who + " — " + r.n + "건 (마지막 " + String(r.last || "").slice(0, 10) + ")";
     });
     const aLines = rep.authors.map(function (r) { return "• " + r.author + " — " + r.n + "건"; });
     let body = "🗂 <b>발신인·전달자 정리</b> (메시지+파일+insight, 건수순)\n총 " + rep.senders.length + "명\n\n" + sLines.join("\n");
     body += "\n\n🏠 <b>방(chat_id) " + rep.rooms.length + "개</b>\n" + rLines.join("\n");
     if (aLines.length) body += "\n\n✍️ <b>보고문 작성자(author)</b>\n" + aLines.join("\n");
+    body += "\n\nℹ️ 개인 텔레그램 user_id는 저장하지 않아 <b>이름</b> 기준입니다. 예외로 <b>개인 DM 방(양수 chat_id)</b>은 그 번호가 곧 그 사람의 텔레그램 id입니다(위 '= 이름' 표기). 그룹으로 전달돼 들어온 발신인은 id가 없습니다.";
     return sendMessage(env, chatId, body);
   }
 
