@@ -599,3 +599,30 @@ export async function qLen(env, name) {
     return Array.isArray(arr) ? arr.length : 0;
   } catch (e) { return 0; }
 }
+
+// 저장된 발신인/전달자(sender)·방(chat_id) 정리 리포트. /senders 명령용.
+export async function getIdentityReport(env) {
+  let senders = [], rooms = [], authors = [];
+  try {
+    senders = (await env.DB.prepare(
+      "SELECT sender, SUM(cnt) AS n FROM (" +
+      "SELECT sender, COUNT(*) AS cnt FROM messages WHERE sender IS NOT NULL AND sender != '' GROUP BY sender " +
+      "UNION ALL " +
+      "SELECT sender, COUNT(*) AS cnt FROM files WHERE sender IS NOT NULL AND sender != '' GROUP BY sender " +
+      "UNION ALL " +
+      "SELECT sender, COUNT(*) AS cnt FROM insights WHERE sender IS NOT NULL AND sender != '' GROUP BY sender" +
+      ") GROUP BY sender ORDER BY n DESC LIMIT 100"
+    ).all()).results || [];
+  } catch (e) { console.error("identity senders error", e && e.message); }
+  try {
+    rooms = (await env.DB.prepare(
+      "SELECT chat_id, COUNT(*) AS n, MAX(created_at) AS last FROM messages GROUP BY chat_id ORDER BY n DESC LIMIT 40"
+    ).all()).results || [];
+  } catch (e) { console.error("identity rooms error", e && e.message); }
+  try {
+    authors = (await env.DB.prepare(
+      "SELECT author, COUNT(*) AS n FROM insights WHERE author IS NOT NULL AND author != '' AND author != '—' GROUP BY author ORDER BY n DESC LIMIT 40"
+    ).all()).results || [];
+  } catch (e) { console.error("identity authors error", e && e.message); }
+  return { senders, rooms, authors };
+}
