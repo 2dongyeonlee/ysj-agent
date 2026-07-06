@@ -8,7 +8,7 @@ import { runProjectBriefing } from "./project.js";
 import { handleVoice, makeMinutesFromStored, runVoiceQueue, summarizeRecentMessages, runTextMinutesQueue, summarizeMessageBlock, summarizeMessagesUpTo } from "./voice.js";
 import { sendMessage, sendDocument, sendDocumentBytes } from "./telegram.js";
 import { callClaude, MODEL_SMART } from "./claude.js";
-import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks, checkInsights, dedupInsights, getResummaryTargets, updateInsightSummary, qLen, qPush } from "./db.js";
+import { addProjectKeyword, listProjects, deleteProject, addSubtask, listSubtasks, delSubtasks, checkInsights, dedupInsights, getResummaryTargets, updateInsightSummary, qLen, qPush, getIdentityReport } from "./db.js";
 import { resummarizeText, runReindex } from "./insight.js";
 import { splitBriefingSections } from "./collect.js";
 import { runReclass } from "./reclass.js";
@@ -192,6 +192,23 @@ async function route(env, msg) {
   }
 
   // 녹음 큐 진단(읽기 전용): 최근 오디오 행의 방(chat_id)·전사 상태·R2 여부를 그대로 보여준다.
+  // 저장된 발신인/전달자·방(chat_id) 정리 리포트.
+  if (text === "/senders" || text === "/people" || text === "/db") {
+    const rep = await getIdentityReport(env);
+    if (!rep.senders.length && !rep.rooms.length) return sendMessage(env, chatId, "저장된 발신인 데이터가 없습니다.");
+    const sLines = rep.senders.map(function (r, i) {
+      return (i + 1) + ". " + (r.sender || "(빈값)") + " — " + r.n + "건";
+    });
+    const rLines = rep.rooms.map(function (r) {
+      return "• <code>" + r.chat_id + "</code> — " + r.n + "건 (마지막 " + String(r.last || "").slice(0, 10) + ")";
+    });
+    const aLines = rep.authors.map(function (r) { return "• " + r.author + " — " + r.n + "건"; });
+    let body = "🗂 <b>발신인·전달자 정리</b> (메시지+파일+insight, 건수순)\n총 " + rep.senders.length + "명\n\n" + sLines.join("\n");
+    body += "\n\n🏠 <b>방(chat_id) " + rep.rooms.length + "개</b>\n" + rLines.join("\n");
+    if (aLines.length) body += "\n\n✍️ <b>보고문 작성자(author)</b>\n" + aLines.join("\n");
+    return sendMessage(env, chatId, body);
+  }
+
   if (text === "/vq") {
     const { results } = await env.DB.prepare(
       "SELECT id, chat_id, filename, sender, r2_key, " +
