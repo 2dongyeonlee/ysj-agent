@@ -193,6 +193,30 @@ async function route(env, msg) {
 
   // 녹음 큐 진단(읽기 전용): 최근 오디오 행의 방(chat_id)·전사 상태·R2 여부를 그대로 보여준다.
   // 저장된 발신인/전달자·방(chat_id) 정리 리포트.
+  // 자동 브리핑(아침/정보/업무)이 어느 방으로 가는지 — 대상 목록을 이름과 함께.
+  if (text === "/brieftargets" || text === "/브리핑대상") {
+    const tgt = String(env.BRIEFING_TARGET_ID || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+    const bc = String(env.BRIEFING_CHAT_ID || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+    const all = Array.from(new Set(tgt.concat(bc)));
+    if (!all.length) return sendMessage(env, chatId, "자동 브리핑 대상이 설정돼 있지 않습니다 (BRIEFING_TARGET_ID / BRIEFING_CHAT_ID 비어있음).");
+    const lines = [];
+    for (const cid of all) {
+      let who = "";
+      try {
+        const r = await env.DB.prepare(
+          "SELECT sender FROM messages WHERE chat_id = ? AND sender != '' AND sender != 'Yeom agent' GROUP BY sender ORDER BY COUNT(*) DESC LIMIT 1"
+        ).bind(String(cid)).first();
+        who = (r && r.sender) || "";
+      } catch (e) { /* 무시 */ }
+      const isDM = !String(cid).startsWith("-");
+      const tag = tgt.indexOf(cid) !== -1 ? "" : " (CHAT_ID만)";
+      lines.push("• <code>" + cid + "</code> " + (isDM ? ("= <b>" + (who || "개인") + "</b> (개인방)") : ("(그룹" + (who ? " · 대표 " + who : "") + ")")) + tag);
+    }
+    return sendMessage(env, chatId,
+      "📮 <b>자동 브리핑 대상</b> (아침·/info·/brief 자동 발송)\n" + lines.join("\n") +
+      "\n\n※ 여기 <b>없는 사람은 자동 브리핑을 못 받습니다.</b> 염성진님을 넣으려면 그분 개인 chat_id를 Cloudflare 변수 <code>BRIEFING_TARGET_ID</code> 에 콤마로 추가하세요. (그분 chat_id는 /senders 의 개인방 번호, 또는 그분이 봇에 /whoami 를 보내 확인)");
+  }
+
   if (text === "/senders" || text === "/people" || text === "/db") {
     const rep = await getIdentityReport(env);
     if (!rep.senders.length && !rep.rooms.length) return sendMessage(env, chatId, "저장된 발신인 데이터가 없습니다.");
