@@ -193,6 +193,25 @@ async function route(env, msg) {
 
   // 녹음 큐 진단(읽기 전용): 최근 오디오 행의 방(chat_id)·전사 상태·R2 여부를 그대로 보여준다.
   // 저장된 발신인/전달자·방(chat_id) 정리 리포트.
+  // 최근 저장된 메시지 미리보기(디버그). 옵션: '/recent 30' 개수, '/recent 방' 이 방만.
+  if (text === "/recent" || text.startsWith("/recent ")) {
+    const arg = text.replace("/recent", "").trim();
+    const onlyHere = /방|여기|this/.test(arg);
+    const n = Math.max(1, Math.min(parseInt((arg.match(/\d+/) || [])[0], 10) || 15, 40));
+    let sql = "SELECT chat_id, sender, substr(text,1,45) AS t, substr(created_at,1,16) AS dt FROM messages ";
+    const binds = [];
+    if (onlyHere) { sql += "WHERE chat_id = ? "; binds.push(String(chatId)); }
+    sql += "ORDER BY id DESC LIMIT ?"; binds.push(n);
+    let results;
+    try { ({ results } = await env.DB.prepare(sql).bind(...binds).all()); }
+    catch (e) { return sendMessage(env, chatId, "조회 오류: " + ((e && e.message) || e)); }
+    if (!results || !results.length) return sendMessage(env, chatId, "저장된 메시지가 없습니다.");
+    const lines = results.map(function (r) {
+      return "• " + (r.dt || "") + " · " + (r.sender || "?") + "\n  " + String(r.t || "").replace(/\n/g, " ");
+    });
+    return sendMessage(env, chatId, "🗒 <b>최근 메시지 " + results.length + "건</b>" + (onlyHere ? " (이 방)" : "") + "\n\n" + lines.join("\n"));
+  }
+
   // 자동 브리핑(아침/정보/업무)이 어느 방으로 가는지 — 대상 목록을 이름과 함께.
   if (text === "/brieftargets" || text === "/브리핑대상") {
     const tgt = String(env.BRIEFING_TARGET_ID || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
