@@ -227,11 +227,33 @@ async function route(env, msg) {
     let results;
     try { ({ results } = await env.DB.prepare(sql).bind(...binds).all()); }
     catch (e) { return sendMessage(env, chatId, "조회 오류: " + ((e && e.message) || e)); }
-    if (!results || !results.length) return sendMessage(env, chatId, "저장된 메시지가 없습니다.");
-    const lines = results.map(function (r) {
-      return "• " + (r.dt || "") + " · " + (r.sender || "?") + "\n  " + String(r.t || "").replace(/\n/g, " ");
-    });
-    return sendMessage(env, chatId, "🗒 <b>최근 메시지 " + results.length + "건</b>" + (onlyHere ? " (이 방)" : "") + "\n\n" + lines.join("\n"));
+    // 파일은 messages 가 아니라 files 테이블에 저장되므로 함께 보여준다(처리 상태 포함).
+    let files = [];
+    try {
+      let fsql = "SELECT filename, sender, process_status, length(text) AS tlen, substr(created_at,1,16) AS dt FROM files ";
+      const fbinds = [];
+      if (onlyHere) { fsql += "WHERE chat_id = ? "; fbinds.push(String(chatId)); }
+      fsql += "ORDER BY id DESC LIMIT 10";
+      files = ((await env.DB.prepare(fsql).bind(...fbinds).all()).results) || [];
+    } catch (e) { console.error("recent files error", e && e.message); }
+    if ((!results || !results.length) && !files.length) {
+      return sendMessage(env, chatId, "저장된 메시지·파일이 없습니다.");
+    }
+    const parts = [];
+    if (results && results.length) {
+      const lines = results.map(function (r) {
+        return "• " + (r.dt || "") + " · " + (r.sender || "?") + "\n  " + String(r.t || "").replace(/\n/g, " ");
+      });
+      parts.push("🗒 <b>최근 메시지 " + results.length + "건</b>" + (onlyHere ? " (이 방)" : "") + "\n\n" + lines.join("\n"));
+    }
+    if (files.length) {
+      const flines = files.map(function (f) {
+        const st = f.process_status === "done" || (f.tlen && f.tlen > 50) ? "✅처리됨" : (f.process_status === "pending" ? "⏳처리 대기" : "—");
+        return "• " + (f.dt || "") + " · " + (f.sender || "?") + " · " + st + "\n  " + String(f.filename || "").slice(0, 45);
+      });
+      parts.push("📎 <b>최근 파일 " + files.length + "건</b>" + (onlyHere ? " (이 방)" : "") + "\n\n" + flines.join("\n"));
+    }
+    return sendMessage(env, chatId, parts.join("\n\n" + "─────" + "\n\n"));
   }
 
   // 자동 브리핑(아침/정보/업무)이 어느 방으로 가는지 — 대상 목록을 이름과 함께.
