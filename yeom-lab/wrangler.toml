@@ -5,9 +5,11 @@
 #     npx wrangler secret put ANTHROPIC_API_KEY
 #     npx wrangler secret put TAVILY_API_KEY
 #     npx wrangler secret put ASSEMBLYAI_API_KEY   # 녹음 STT 사용 시
-# ▸ 아래 REPLACE_ 표시는 리소스 생성 후 실제 값으로 교체:
+# ▸ 아래 0000... 자리는 placeholder — GitHub Actions 'yeom-lab setup' 워크플로우가
+#   리소스 생성 후 실제 id 로 치환해 배포한다 (.github/workflows/yeom-lab-setup.yml).
+#   로컬에서 수동 셋업 시에는 아래 명령의 출력 id 로 직접 교체:
 #     npx wrangler d1 create yeom-lab-db          → database_id
-#     npx wrangler kv namespace create yeom-lab-kv → id
+#     npx wrangler kv namespace create STATE       → id
 #     npx wrangler r2 bucket create yeom-lab-files
 
 name = "yeom-lab"
@@ -33,11 +35,11 @@ crons = [
 [[d1_databases]]
 binding = "DB"
 database_name = "yeom-lab-db"
-database_id = "REPLACE_WITH_YEOM_LAB_D1_ID"
+database_id = "00000000-0000-0000-0000-000000000000"   # placeholder — setup 워크플로우가 치환
 
 [[kv_namespaces]]
 binding = "STATE"
-id = "REPLACE_WITH_YEOM_LAB_KV_ID"
+id = "00000000000000000000000000000000"                # placeholder — setup 워크플로우가 치환
 
 [[r2_buckets]]
 binding = "R2"

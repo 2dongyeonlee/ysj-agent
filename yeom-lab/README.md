@@ -10,7 +10,20 @@
 - `src/index.js`: webhook에 `callback_query` 분기(`handleCallback`)
 - `migrations/0014_add_voice_async.sql`: 운영 DB에 수동 추가돼 있던 컬럼 보충
 
-## 로컬 셋업 (Windows PowerShell, 이 폴더 안에서)
+## 셋업 A — GitHub Actions (패드/폰에서 가능, 권장)
+
+로컬 명령 없이 저장소의 `yeom-lab setup` 워크플로우(Actions 탭)가 전부 수행한다:
+D1/KV/R2 생성 → id 치환 → 마이그레이션 → 배포 → Worker 시크릿 → setWebhook.
+
+사전 준비 (GitHub 웹 → Settings → Secrets and variables → Actions):
+- `YEOMLAB_TELEGRAM_BOT_TOKEN` — BotFather 로 만든 **새 봇** 토큰
+- `ANTHROPIC_API_KEY` / `TAVILY_API_KEY` / `ASSEMBLYAI_API_KEY` — 있는 것만 (없으면 해당 기능만 비활성)
+- `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` 는 기존 deploy 용으로 이미 있음
+
+실행 시 입력: 새 봇 username, 테스트 방 chat_id (기본값: 운영자 DM).
+봇 토큰 Secret 이 없으면 시크릿·webhook 단계만 건너뛰고 나머지는 진행된다(재실행 가능).
+
+## 셋업 B — 로컬 (Windows PowerShell, 이 폴더 안에서)
 
 ```powershell
 # 0) 이 폴더를 C:\Users\pc\Documents\6r-ai-bot\yeom-lab 로 복사한 뒤 그 안에서 실행
