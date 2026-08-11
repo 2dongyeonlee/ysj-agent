@@ -174,7 +174,11 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false, optio
     } catch (e) {
       console.error("meeting document save error", e && e.message);
     }
-    await sendMessage(env, chatId, await withMetaFollowup(env, chatId, (msg.document && msg.document.file_id) || "", minutes.short));
+    // 자동 발송 금지: 자료 업로드는 조용히 저장·분류만. 회의록은 요청 시(/minutes,
+    // 파일에 답장 '요약해줘', 멘션)에만 발송한다.
+    if (replyToUser) {
+      await sendMessage(env, chatId, await withMetaFollowup(env, chatId, (msg.document && msg.document.file_id) || "", minutes.short));
+    }
     return;
   }
 
