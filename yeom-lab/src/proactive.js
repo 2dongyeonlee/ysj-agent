@@ -56,17 +56,17 @@ export function extractActionItems(minutesText) {
 // 회의록 생성 훅 — Action Item 을 open 상태로 저장.
 export async function saveActionItems(env, minutesText, minutesId = 0) {
   const items = extractActionItems(minutesText);
-  for (const content of items) {
+  for (let i = 0; i < items.length; i++) {
     try {
       await env.DB.prepare(
-        "INSERT INTO action_items (minutes_id, content, owner, status) VALUES (?, ?, '', 'open')"
-      ).bind(minutesId, content.slice(0, 300)).run();
+        "INSERT INTO action_items (minutes_id, item_no, content, owner, status) VALUES (?, ?, ?, '', 'open')"
+      ).bind(minutesId, i + 1, items[i].slice(0, 300)).run();
     } catch (e) { console.error("saveActionItems", e && e.message); }
   }
   return items.length;
 }
 
-// 이슈 추적 구독 등록 ([📌 이슈 추적] 버튼).
+// 이슈 추적 구독 등록 (관련 자료 수신 시 알림 대상 키워드).
 export async function addSubscription(env, chatId, keyword) {
   await env.DB.prepare(
     "INSERT INTO subscriptions (chat_id, keyword) VALUES (?, ?)"

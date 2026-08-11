@@ -13,8 +13,13 @@ import { resummarizeText, runReindex } from "./insight.js";
 import { splitBriefingSections } from "./collect.js";
 import { runReclass } from "./reclass.js";
 import { extractText } from "./docparse.js";
-import { runTomorrowAlert, addSubscription } from "./proactive.js";
+import { runTomorrowAlert } from "./proactive.js";
 import { dashboardResponse } from "./dashboard.js";
+import {
+  PROJECTS, sendMainMenu, showTopic, sendProjectGrid, sendProjectCard, sendProjectAgenda,
+  sendMinutesList, sendMinutesSummary, sendFullMinutes, sendMinutesActionItems,
+  completeActionItem, sendOpenActionItems,
+} from "./menu.js";
 
 // 권한자 인식. (1) chat_id 기반: ADMIN_CHAT_ID 또는 BRIEFING_TARGET_ID 채팅 — @username
 // 미설정 단말에서도 동작(권장). (2) ADMIN_USERNAMES @username 기반(보조).
@@ -113,38 +118,30 @@ async function handleCallback(env, cq) {
   const chatId = cq.message && cq.message.chat && cq.message.chat.id;
   if (!chatId) return;
   const data = String(cq.data || "");
-  if (data === "detail") return runBrief(env, chatId);
-  if (data === "lastweek") return runBrief(env, chatId, 7);
-  if (data === "track") {
-    // 목업②: subscriptions 에 실제 등록 (키워드는 우선 고정 — 다음 단계에서 선택형으로)
-    try { await addSubscription(env, chatId, "중복상장"); }
-    catch (e) { console.error("addSubscription", e && e.message); }
-    return sendMessage(env, chatId, "이슈 추적 등록: 중복상장 (관련 자료 수신 시 알림)");
+  // ---- 메인 메뉴 ----
+  if (data === "menu_home") return sendMainMenu(env, chatId);
+  if (data === "menu_brief") return runBrief(env, chatId);
+  if (data === "menu_minutes") return sendMinutesList(env, chatId);
+  if (data === "menu_project") return sendProjectGrid(env, chatId);
+  if (data === "menu_ai") return sendOpenActionItems(env, chatId);
+  // ---- 브리핑 핵심 안건 ----
+  if (data.startsWith("topic:")) return showTopic(env, chatId, data.slice(6));
+  // ---- 프로젝트 → 안건 → 상세 ----
+  if (data.startsWith("pj:")) return sendProjectCard(env, chatId, parseInt(data.slice(3), 10));
+  if (data.startsWith("pa:")) {
+    const parts = data.split(":");
+    return sendProjectAgenda(env, chatId, parseInt(parts[1], 10), parts.slice(2).join(":"));
   }
-  if (data === "mail") return sendMessage(env, chatId, "준비 중입니다 (메일 발송 연동 예정)");
-  // ---- 회의록 버튼 ----
-  if (data === "ai_only") return sendActionItemsOnly(env, chatId);
-  if (data === "full") return makeMinutesFromStored(env, chatId);
-  if (data === "rel") return sendMessage(env, chatId, "준비 중입니다 (관련 자료)");
-  if (data === "mail2") return sendMessage(env, chatId, "준비 중입니다 (메일 발송 연동 예정)");
-}
-
-// [✅ Action Item만] — 직전 회의록에서 Action Item 섹션만 재전송. 없으면 저장분 폴백.
-async function sendActionItemsOnly(env, chatId) {
-  try {
-    const row = await env.DB.prepare(
-      "SELECT full_minutes FROM files WHERE chat_id = ? AND full_minutes IS NOT NULL AND full_minutes != '' ORDER BY id DESC LIMIT 1"
-    ).bind(String(chatId)).first();
-    if (row && row.full_minutes) {
-      const m = String(row.full_minutes).match(/■[^\n]*Action\s*Item[\s\S]*?(?=\n\s*■|$)/i);
-      if (m) return sendMessage(env, chatId, m[0].trim());
-    }
-  } catch (e) { console.error("ai_only minutes", e && e.message); }
-  const rows = ((await env.DB.prepare(
-    "SELECT content FROM action_items WHERE status='open' ORDER BY id DESC LIMIT 10"
-  ).all()).results) || [];
-  if (!rows.length) return sendMessage(env, chatId, "저장된 Action Item이 없습니다. 회의록을 먼저 작성해 주세요.");
-  return sendMessage(env, chatId, "✅ <b>Action Item</b>\n" + rows.map(function (r) { return "• " + r.content; }).join("\n"));
+  if (data.startsWith("ph:")) {
+    const p = PROJECTS[parseInt(data.slice(3), 10)];
+    if (!p) return sendMainMenu(env, chatId);
+    return runProjectBriefing(env, chatId, null, p.keys[0]);
+  }
+  // ---- 회의록 목록 → 상세 → Action Item ----
+  if (data.startsWith("min:")) return sendMinutesSummary(env, chatId, parseInt(data.slice(4), 10));
+  if (data.startsWith("full:")) return sendFullMinutes(env, chatId, parseInt(data.slice(5), 10));
+  if (data.startsWith("ai:")) return sendMinutesActionItems(env, chatId, parseInt(data.slice(3), 10));
+  if (data.startsWith("aid:")) return completeActionItem(env, chatId, parseInt(data.slice(4), 10));
 }
 
 export default {
@@ -236,7 +233,9 @@ async function route(env, msg) {
   }
 
   // ---- commands (ASCII only). arg = text after the command ----
-  if (text === "/help" || text === "/start") return sendMessage(env, chatId, HELP);
+  // /start → 안건 중심 메인 메뉴 (모든 하위 화면에서 [🏠 메뉴]로 복귀).
+  if (text === "/start" || text === "/menu" || text === "메뉴") return sendMainMenu(env, chatId);
+  if (text === "/help") return sendMessage(env, chatId, HELP);
 
   // 내 chat_id·관리자 여부 확인 (권한 설정용). 누구나 사용 가능.
   if (text === "/whoami") {

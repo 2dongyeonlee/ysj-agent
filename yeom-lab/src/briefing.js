@@ -205,17 +205,35 @@ function withTimeout(promise, ms, message) {
   ]);
 }
 
-// 브리핑 하단 인라인 버튼. callback 분기는 index.js handleCallback 참조.
-// [📊 상황판](web_app)은 텔레그램 제약상 개인 채팅에서만 허용 → DM 에만 붙인다.
-function briefKeyboard(env, chatId) {
-  const rows = [
-    [{ text: "📋 상세보기", callback_data: "detail" }, { text: "📅 지난주", callback_data: "lastweek" }],
-    [{ text: "📌 이슈 추적", callback_data: "track" }, { text: "✉️ 메일로", callback_data: "mail" }],
-  ];
-  const isDM = !String(chatId).startsWith("-");
-  if (env && env.DASHBOARD_URL && isDM) {
-    rows.push([{ text: "📊 상황판", web_app: { url: env.DASHBOARD_URL } }]);
+// 브리핑 하단 버튼 — 핵심 안건 자체가 버튼(안건 중심 탐색). 본문 출력은 기존과 동일하며,
+// 완성된 브리핑 텍스트에서 안건 키워드만 파싱해 버튼 메타데이터로 쓴다.
+function topicFromLine(line) {
+  let s = String(line)
+    .replace(/<[^>]+>/g, "")
+    .replace(/^\s*[•·▪-]+\s*/, "")
+    .replace(/^\[[^\]]*\]\s*/, "")
+    .trim();
+  s = s.split(/[—–:,(]/)[0].trim();
+  return s;
+}
+function topicKeyboard(text) {
+  const NUM = ["①", "②", "③"];
+  const seen = new Set();
+  const btns = [];
+  for (const line of String(text || "").split("\n")) {
+    if (!/^\s*•/.test(line)) continue;
+    if (/없음/.test(line)) continue;
+    const s = topicFromLine(line);
+    if (s.length < 2) continue;
+    const kw = s.slice(0, 10).trim();          // callback_data 64byte 한도 내 안건 키워드
+    if (seen.has(kw)) continue;
+    seen.add(kw);
+    btns.push({ text: NUM[btns.length] + " " + s.slice(0, 12), callback_data: "topic:" + kw });
+    if (btns.length >= 3) break;
   }
+  const rows = [];
+  if (btns.length) rows.push(btns);
+  rows.push([{ text: "🏠 메뉴", callback_data: "menu_home" }]);
   return { inline_keyboard: rows };
 }
 
@@ -249,7 +267,7 @@ export async function runMorningBriefing(env, replyChatId) {
   await sendMessage(env, target, summary);
 }
 
-// extraDays: [📅 지난주] 버튼용 — 조회 범위를 그만큼 과거로 넓힌다. 기본 0(기존 동작 동일).
+// extraDays: 조회 범위를 그만큼 과거로 넓힌다(예: 7 = 지난주 포함). 기본 0(기존 동작 동일).
 export async function runBrief(env, chatId, extraDays = 0) {
   const infoRows = (await getInsightsSince(env, sinceDaysIso(2 + extraDays), { categoryIn: INFO_CATEGORIES, projectEmpty: true })) || [];
   const projRows = (await getInsightsSince(env, sinceDaysIso(14 + extraDays), { projectNotEmpty: true })) || [];
@@ -268,7 +286,7 @@ export async function runBrief(env, chatId, extraDays = 0) {
         25000,
         "brief compose timeout"
       ));
-      if (composed) return sendLongMessage(env, chatId, composed, { reply_markup: briefKeyboard(env, chatId) });
+      if (composed) return sendLongMessage(env, chatId, composed, { reply_markup: topicKeyboard(composed) });
     } catch (e) {
       console.error("compose brief error", e && e.message);
     }
@@ -308,7 +326,7 @@ export async function runBrief(env, chatId, extraDays = 0) {
   lines.push(SEPARATOR);
   lines.push("대외정보 /info · 프로젝트 /project · 업무 브리핑 /brief");
 
-  await sendLongMessage(env, chatId, lines.join("\n"), { reply_markup: briefKeyboard(env, chatId) });
+  await sendLongMessage(env, chatId, lines.join("\n"), { reply_markup: topicKeyboard(lines.join("\n")) });
 }
 
 export async function runBriefAuto(env) {

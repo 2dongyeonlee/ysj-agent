@@ -6,7 +6,7 @@ import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 import { loadProjectKeywords, matchProjects, detectDone, detectUrgent, classifyInfoCategory, normalizeProject, parseInfoMeta } from "./insight.js";
 import { saveFile, updateInsightDone, qPush, qShift, searchBySender, searchAll } from "./db.js";
-import { createMeetingMinutes, withMetaFollowup, MINUTES_KEYBOARD } from "./voice.js";
+import { createMeetingMinutes, withMetaFollowup, minutesKeyboard } from "./voice.js";
 import { saveActionItems } from "./proactive.js";
 
 const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" + `문서를 읽고 JSON만 반환하라. 마크다운 금지.
@@ -181,7 +181,7 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false, optio
     // 자동 발송 금지: 자료 업로드는 조용히 저장·분류만. 회의록은 요청 시(/minutes,
     // 파일에 답장 '요약해줘', 멘션)에만 발송한다.
     if (replyToUser) {
-      await sendMessage(env, chatId, await withMetaFollowup(env, chatId, (msg.document && msg.document.file_id) || "", minutes.short), { reply_markup: MINUTES_KEYBOARD });
+      await sendMessage(env, chatId, await withMetaFollowup(env, chatId, (msg.document && msg.document.file_id) || "", minutes.short), { reply_markup: minutesKeyboard(null) });
     }
     return;
   }

@@ -9,13 +9,20 @@ import { saveFile, qPush, qShift, qLen } from "./db.js";
 import { buildR2Key } from "./collect.js";
 import { saveActionItems } from "./proactive.js";
 
-// 회의록 하단 인라인 버튼(목업①). callback 분기는 index.js handleCallback 참조.
-export const MINUTES_KEYBOARD = {
-  inline_keyboard: [
-    [{ text: "✅ Action Item만", callback_data: "ai_only" }, { text: "🔊 전체 회의록", callback_data: "full" }],
-    [{ text: "📂 관련 자료", callback_data: "rel" }, { text: "✉️ 메일 발송", callback_data: "mail2" }],
-  ],
-};
+// 회의록 하단 버튼 — 안건 중심 탐색 구조. fileRowId(files.id)가 있으면 해당 회의록에 바인딩.
+export function minutesKeyboard(fileRowId) {
+  const rows = [];
+  if (fileRowId) {
+    rows.push([
+      { text: "✅ Action Item", callback_data: "ai:" + fileRowId },
+      { text: "🔊 전체 보기", callback_data: "full:" + fileRowId },
+    ]);
+  } else {
+    rows.push([{ text: "✅ Action Item", callback_data: "menu_ai" }]);
+  }
+  rows.push([{ text: "🏠 메뉴", callback_data: "menu_home" }]);
+  return { inline_keyboard: rows };
+}
 
 async function getFileUrl(env, fileId) {
   const res = await fetch(
@@ -682,7 +689,7 @@ export async function runTextMinutesQueue(env) {
     let body = (minutes && (minutes.full || minutes.short)) || "회의록 생성에 실패했습니다. 다시 시도해주세요.";
     if (/미상|미정/.test(body)) body += "\n\n날짜·참석 명단·주요 아젠다를 알려주시면 반영해 다시 작성해 드립니다.";
     try { await saveActionItems(env, body); } catch (e) { console.error("tmin action items", e && e.message); }
-    await sendMessage(env, chatId, body, { reply_markup: MINUTES_KEYBOARD });
+    await sendMessage(env, chatId, body, { reply_markup: minutesKeyboard(null) });
   } catch (e) {
     console.error("runTextMinutesQueue error", e && (e.stack || e.message));
     await sendMessage(env, chatId, "회의록 작성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
@@ -742,7 +749,7 @@ export async function makeMinutesFromStored(env, chatId) {
   if (!row || !row.text) {
     return sendMessage(env, chatId, "최근 받아쓰기를 찾지 못했습니다. 녹음을 먼저 보내주세요.");
   }
-  if (row.full_minutes) return sendMessage(env, chatId, await withMetaFollowup(env, chatId, row.file_id, row.full_minutes), { reply_markup: MINUTES_KEYBOARD });
+  if (row.full_minutes) return sendMessage(env, chatId, await withMetaFollowup(env, chatId, row.file_id, row.full_minutes), { reply_markup: minutesKeyboard(row.id) });
   // 상세본이 없으면 생성 작업을 큐에 넣는다. 다음 분 Cron(runVoiceQueue→generateMinutes)이 처리.
   await qPush(env, "mj", String(chatId), true);
   return sendMessage(env, chatId,
@@ -769,7 +776,7 @@ export async function generateMinutes(env, chatId) {
     return sendMessage(env, chatId, "최근 받아쓰기를 찾지 못했습니다. 녹음을 먼저 보내주세요.");
   }
   try {
-    if (row.full_minutes) return sendMessage(env, chatId, await withMetaFollowup(env, chatId, row.file_id, row.full_minutes), { reply_markup: MINUTES_KEYBOARD });
+    if (row.full_minutes) return sendMessage(env, chatId, await withMetaFollowup(env, chatId, row.file_id, row.full_minutes), { reply_markup: minutesKeyboard(row.id) });
     const sourceText = row.timed_text || row.text;
     const minutes = await createMeetingMinutes(env, sourceText);
     // full이 비면 short로 승격(JSON 잘림 등으로 full 누락 시 null 저장 방지)
@@ -781,7 +788,7 @@ export async function generateMinutes(env, chatId) {
     } catch (e) { console.error("generateMinutes saveMeetingInsight error", e && e.message); }
     try { await saveActionItems(env, fullToSave || minutes.short, row.id); } catch (e) { console.error("minutes action items", e && e.message); }
     const out = await withMetaFollowup(env, chatId, row.file_id, fullToSave || minutes.short);
-    await sendMessage(env, chatId, out, { reply_markup: MINUTES_KEYBOARD });
+    await sendMessage(env, chatId, out, { reply_markup: minutesKeyboard(row.id) });
   } catch (e) {
     console.error("generateMinutes error", e && (e.stack || e.message));
     await sendMessage(env, chatId, "회의록 작성에 실패했습니다. 잠시 후 다시 '회의록'이라고 보내주세요.");
