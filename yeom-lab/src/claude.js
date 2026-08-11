@@ -1,7 +1,8 @@
 // claude.js — Anthropic Messages API 래퍼.
 
 export const MODEL_FAST = "claude-haiku-4-5-20251001"; // 분류·단순작업
-export const MODEL_SMART = "claude-sonnet-4-6";        // 요약·브리핑
+// 실험용(yeom-lab): 비용 최소화를 위해 요약·브리핑도 Haiku 사용 (최저가: $1/$5 per 1M tokens)
+export const MODEL_SMART = "claude-haiku-4-5-20251001"; // 요약·브리핑
 
 export async function callClaude(env, userText, system = "", model = MODEL_FAST, maxTokens = 800) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
