@@ -25,11 +25,13 @@ BRIEFING_CHAT_ID = "REPLACE_WITH_TEST_CHAT_ID"          # 수집 대상 테스�
 BRIEFING_TARGET_ID = "REPLACE_WITH_TEST_CHAT_ID"        # 자동 브리핑 수신 테스트 방
 ADMIN_CHAT_ID = "REPLACE_WITH_TEST_CHAT_ID"             # 관리자 명령 허용 chat_id
 ADMIN_USERNAMES = ""                                     # 보조: 관리자 @username (쉼표 구분)
+DASHBOARD_URL = "https://yeom-lab.ysjagent26.workers.dev/dashboard"  # [📊 상황판] Mini App
 
 [triggers]
 crons = [
   "0 23 * * sun,mon,tue,wed,thu",   # 평일 KST 08:00 아침 브리핑 (테스트 방으로만 발송)
   "*/2 * * * *",                    # 2분마다 — 녹음 받아쓰기·문서 처리 큐
+  "0 9 * * *",                      # 매일 KST 18:00 — 내일 일정 사전 브리핑 (목업②)
 ]
 
 [[d1_databases]]

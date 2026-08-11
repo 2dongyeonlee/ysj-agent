@@ -5,6 +5,7 @@ import { sinceDaysIso } from "./utils.js";
 import { maybeExtractEngagement } from "./extract.js";
 import { extractInsight, captionProject, loadProjectKeywords } from "./insight.js";
 import { extractText } from "./docparse.js";
+import { saveScheduleFromText } from "./proactive.js";
 
 const INSIGHT_CONTENT_RE = /보고|일정|회의|미팅|면담|간담회|결정|승인|검토|발표|배포|규제|정책|국회|정부|공정위|산업부|BH|대통령|글로벌|언론|기사|PR|프로젝트|추진|협력|제휴|오찬|자료|요약|공유|요청|의견|청취|리스크|대응|계획|변경|확인|준비|토킹포인트|O\/I|TF|Nexus|넥서스|서남권|용인|Pull-in/i;
 const CHATTER_RE = /^(안녕하세요|감사합니다|네|넵|오 |아 |음|제가 |저장을|따로|보내주신|일정도|최근|여기까지|잘 |좋|맞아요|이해를|가능|\/|@)/;
@@ -163,6 +164,9 @@ export async function collectMessage(env, msg) {
       sender: effSender,
       text: bodyText,
     });
+    // 목업② 훅: 날짜·시간 패턴("7/30 10:00", "내일 14시")이 보이면 schedules 에 저장.
+    try { await saveScheduleFromText(env, msg, bodyText); }
+    catch (e) { console.error("schedule hook error", e && e.message); }
     // auto-extract "who was met" into engagements (cheap keyword filter inside)
     try {
       await maybeExtractEngagement(env, msg, bodyText);

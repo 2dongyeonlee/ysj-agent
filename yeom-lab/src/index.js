@@ -13,6 +13,8 @@ import { resummarizeText, runReindex } from "./insight.js";
 import { splitBriefingSections } from "./collect.js";
 import { runReclass } from "./reclass.js";
 import { extractText } from "./docparse.js";
+import { runTomorrowAlert, addSubscription } from "./proactive.js";
+import { dashboardResponse } from "./dashboard.js";
 
 // 권한자 인식. (1) chat_id 기반: ADMIN_CHAT_ID 또는 BRIEFING_TARGET_ID 채팅 — @username
 // 미설정 단말에서도 동작(권장). (2) ADMIN_USERNAMES @username 기반(보조).
@@ -113,12 +115,44 @@ async function handleCallback(env, cq) {
   const data = String(cq.data || "");
   if (data === "detail") return runBrief(env, chatId);
   if (data === "lastweek") return runBrief(env, chatId, 7);
-  if (data === "track") return sendMessage(env, chatId, "준비 중입니다 (이슈 추적)");
+  if (data === "track") {
+    // 목업②: subscriptions 에 실제 등록 (키워드는 우선 고정 — 다음 단계에서 선택형으로)
+    try { await addSubscription(env, chatId, "중복상장"); }
+    catch (e) { console.error("addSubscription", e && e.message); }
+    return sendMessage(env, chatId, "이슈 추적 등록: 중복상장 (관련 자료 수신 시 알림)");
+  }
   if (data === "mail") return sendMessage(env, chatId, "준비 중입니다 (메일 발송 연동 예정)");
+  // ---- 회의록 버튼 ----
+  if (data === "ai_only") return sendActionItemsOnly(env, chatId);
+  if (data === "full") return makeMinutesFromStored(env, chatId);
+  if (data === "rel") return sendMessage(env, chatId, "준비 중입니다 (관련 자료)");
+  if (data === "mail2") return sendMessage(env, chatId, "준비 중입니다 (메일 발송 연동 예정)");
+}
+
+// [✅ Action Item만] — 직전 회의록에서 Action Item 섹션만 재전송. 없으면 저장분 폴백.
+async function sendActionItemsOnly(env, chatId) {
+  try {
+    const row = await env.DB.prepare(
+      "SELECT full_minutes FROM files WHERE chat_id = ? AND full_minutes IS NOT NULL AND full_minutes != '' ORDER BY id DESC LIMIT 1"
+    ).bind(String(chatId)).first();
+    if (row && row.full_minutes) {
+      const m = String(row.full_minutes).match(/■[^\n]*Action\s*Item[\s\S]*?(?=\n\s*■|$)/i);
+      if (m) return sendMessage(env, chatId, m[0].trim());
+    }
+  } catch (e) { console.error("ai_only minutes", e && e.message); }
+  const rows = ((await env.DB.prepare(
+    "SELECT content FROM action_items WHERE status='open' ORDER BY id DESC LIMIT 10"
+  ).all()).results) || [];
+  if (!rows.length) return sendMessage(env, chatId, "저장된 Action Item이 없습니다. 회의록을 먼저 작성해 주세요.");
+  return sendMessage(env, chatId, "✅ <b>Action Item</b>\n" + rows.map(function (r) { return "• " + r.content; }).join("\n"));
 }
 
 export default {
   async fetch(request, env, ctx) {
+    // 목업③: Mini App 상황판 (단일 HTML, 실데이터).
+    if (request.method === "GET" && new URL(request.url).pathname === "/dashboard") {
+      return dashboardResponse(env);
+    }
     if (request.method !== "POST") return new Response("ok");
     let update;
     try { update = await request.json(); } catch { return new Response("ok"); }
@@ -159,6 +193,11 @@ export default {
           runFileProcessQueue(env).catch(function (e) { console.error("file process queue error", (e && e.stack) || e); }),
         ]);
       })());
+      return;
+    }
+    // 목업②: 매일 18:00 KST — 내일 일정 사전 브리핑 (내일 일정 없으면 침묵).
+    if (event.cron === "0 9 * * *") {
+      ctx.waitUntil(runTomorrowAlert(env).catch(function (e) { console.error("tomorrow alert error", (e && e.stack) || e); }));
       return;
     }
     // 평일 아침 브리핑.
@@ -216,6 +255,11 @@ async function route(env, msg) {
   // 녹음 큐 진단(읽기 전용): 최근 오디오 행의 방(chat_id)·전사 상태·R2 여부를 그대로 보여준다.
   // 저장된 발신인/전달자·방(chat_id) 정리 리포트.
   // 최근 저장된 메시지 미리보기(디버그). 옵션: '/recent 30' 개수, '/recent 방' 이 방만.
+  // 선제 알림 수동 트리거(검증용): cron 을 기다리지 않고 즉시 실행해 이 방으로 발송.
+  if (text === "/alerttest" || text === "/알림테스트") {
+    return runTomorrowAlert(env, chatId);
+  }
+
   if (text === "/recent" || text.startsWith("/recent ")) {
     const arg = text.replace("/recent", "").trim();
     const onlyHere = /방|여기|this/.test(arg);

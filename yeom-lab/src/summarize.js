@@ -6,7 +6,8 @@ import { sendMessage } from "./telegram.js";
 import { PERSONA_STYLE } from "./persona.js";
 import { loadProjectKeywords, matchProjects, detectDone, detectUrgent, classifyInfoCategory, normalizeProject, parseInfoMeta } from "./insight.js";
 import { saveFile, updateInsightDone, qPush, qShift, searchBySender, searchAll } from "./db.js";
-import { createMeetingMinutes, withMetaFollowup } from "./voice.js";
+import { createMeetingMinutes, withMetaFollowup, MINUTES_KEYBOARD } from "./voice.js";
+import { saveActionItems } from "./proactive.js";
 
 const COMBINED_SYSTEM = PERSONA_STYLE + "\n\n" + `문서를 읽고 JSON만 반환하라. 마크다운 금지.
 
@@ -174,10 +175,13 @@ export async function summarizeFile(env, chatId, msg, replyToUser = false, optio
     } catch (e) {
       console.error("meeting document save error", e && e.message);
     }
+    // 목업② 훅: 회의록 Action Item 을 open 상태로 저장(발송 여부와 무관).
+    try { await saveActionItems(env, minutes.full || minutes.short); }
+    catch (e) { console.error("doc action items", e && e.message); }
     // 자동 발송 금지: 자료 업로드는 조용히 저장·분류만. 회의록은 요청 시(/minutes,
     // 파일에 답장 '요약해줘', 멘션)에만 발송한다.
     if (replyToUser) {
-      await sendMessage(env, chatId, await withMetaFollowup(env, chatId, (msg.document && msg.document.file_id) || "", minutes.short));
+      await sendMessage(env, chatId, await withMetaFollowup(env, chatId, (msg.document && msg.document.file_id) || "", minutes.short), { reply_markup: MINUTES_KEYBOARD });
     }
     return;
   }

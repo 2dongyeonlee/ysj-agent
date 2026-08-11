@@ -205,13 +205,19 @@ function withTimeout(promise, ms, message) {
   ]);
 }
 
-// 브리핑 하단 인라인 버튼 (2행 2열). callback 분기는 index.js handleCallback 참조.
-const BRIEF_KEYBOARD = {
-  inline_keyboard: [
+// 브리핑 하단 인라인 버튼. callback 분기는 index.js handleCallback 참조.
+// [📊 상황판](web_app)은 텔레그램 제약상 개인 채팅에서만 허용 → DM 에만 붙인다.
+function briefKeyboard(env, chatId) {
+  const rows = [
     [{ text: "📋 상세보기", callback_data: "detail" }, { text: "📅 지난주", callback_data: "lastweek" }],
     [{ text: "📌 이슈 추적", callback_data: "track" }, { text: "✉️ 메일로", callback_data: "mail" }],
-  ],
-};
+  ];
+  const isDM = !String(chatId).startsWith("-");
+  if (env && env.DASHBOARD_URL && isDM) {
+    rows.push([{ text: "📊 상황판", web_app: { url: env.DASHBOARD_URL } }]);
+  }
+  return { inline_keyboard: rows };
+}
 
 async function sendLongMessage(env, chatId, text, extra) {
   const limit = 3500;
@@ -262,7 +268,7 @@ export async function runBrief(env, chatId, extraDays = 0) {
         25000,
         "brief compose timeout"
       ));
-      if (composed) return sendLongMessage(env, chatId, composed, { reply_markup: BRIEF_KEYBOARD });
+      if (composed) return sendLongMessage(env, chatId, composed, { reply_markup: briefKeyboard(env, chatId) });
     } catch (e) {
       console.error("compose brief error", e && e.message);
     }
@@ -302,7 +308,7 @@ export async function runBrief(env, chatId, extraDays = 0) {
   lines.push(SEPARATOR);
   lines.push("대외정보 /info · 프로젝트 /project · 업무 브리핑 /brief");
 
-  await sendLongMessage(env, chatId, lines.join("\n"), { reply_markup: BRIEF_KEYBOARD });
+  await sendLongMessage(env, chatId, lines.join("\n"), { reply_markup: briefKeyboard(env, chatId) });
 }
 
 export async function runBriefAuto(env) {
