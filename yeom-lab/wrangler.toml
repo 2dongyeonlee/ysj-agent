@@ -1,0 +1,44 @@
+# yeom-lab — 실험용 Worker 배포 설정. 운영(ysj-agent)과 완전 분리.
+#
+# ▸ 시크릿은 yeom-lab 폴더 안에서 각각 등록할 것 (새 봇 토큰 사용!):
+#     npx wrangler secret put TELEGRAM_BOT_TOKEN
+#     npx wrangler secret put ANTHROPIC_API_KEY
+#     npx wrangler secret put TAVILY_API_KEY
+#     npx wrangler secret put ASSEMBLYAI_API_KEY   # 녹음 STT 사용 시
+# ▸ 아래 REPLACE_ 표시는 리소스 생성 후 실제 값으로 교체:
+#     npx wrangler d1 create yeom-lab-db          → database_id
+#     npx wrangler kv namespace create yeom-lab-kv → id
+#     npx wrangler r2 bucket create yeom-lab-files
+
+name = "yeom-lab"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# 새 Worker 는 대시보드 vars 가 없으므로 여기서 직접 정의한다.
+# ⚠️ 반드시 '테스트 방' ID 만 넣을 것. 운영 방·사장님 방 ID 금지.
+[vars]
+BOT_USERNAME = "REPLACE_WITH_NEW_BOT_USERNAME"          # 새 봇 @username (@ 제외)
+BRIEFING_CHAT_ID = "REPLACE_WITH_TEST_CHAT_ID"          # 수집 대상 테스트 방
+BRIEFING_TARGET_ID = "REPLACE_WITH_TEST_CHAT_ID"        # 자동 브리핑 수신 테스트 방
+ADMIN_CHAT_ID = "REPLACE_WITH_TEST_CHAT_ID"             # 관리자 명령 허용 chat_id
+ADMIN_USERNAMES = ""                                     # 보조: 관리자 @username (쉼표 구분)
+
+[triggers]
+crons = [
+  "0 23 * * sun,mon,tue,wed,thu",   # 평일 KST 08:00 아침 브리핑 (테스트 방으로만 발송)
+  "*/2 * * * *",                    # 2분마다 — 녹음 받아쓰기·문서 처리 큐
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "yeom-lab-db"
+database_id = "REPLACE_WITH_YEOM_LAB_D1_ID"
+
+[[kv_namespaces]]
+binding = "STATE"
+id = "REPLACE_WITH_YEOM_LAB_KV_ID"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "yeom-lab-files"
