@@ -1,0 +1,105 @@
+name: yeom-lab setup
+
+# 실험용 Worker(yeom-lab) 원클릭 셋업 — Actions 탭에서 수동 실행.
+# D1/KV/R2 생성(있으면 통과) → id 치환 → 마이그레이션 → 배포 → 시크릿 → webhook 연결.
+# 운영 라인(ysj-agent Worker·ysj-db)은 일절 건드리지 않는다.
+#
+# 필요한 GitHub Secrets:
+#   CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID  (기존 deploy.yml 과 공용)
+#   YEOMLAB_TELEGRAM_BOT_TOKEN  (새 봇 토큰 — 없으면 시크릿·webhook 단계는 건너뜀)
+#   ANTHROPIC_API_KEY / TAVILY_API_KEY / ASSEMBLYAI_API_KEY  (있는 것만 등록됨)
+on:
+  workflow_dispatch:
+    inputs:
+      bot_username:
+        description: "새 봇 @username (@ 제외). 비우면 이번 실행에선 미설정"
+        required: false
+        default: ""
+      test_chat_id:
+        description: "테스트 방/DM chat_id (브리핑 수신 대상)"
+        required: false
+        default: "5965410906"
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: yeom-lab
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 리소스 생성 (이미 있으면 통과)
+        run: |
+          npx wrangler@3.90.0 d1 create yeom-lab-db || echo "d1 이미 있음"
+          npx wrangler@3.90.0 kv namespace create STATE || echo "kv 이미 있음"
+          npx wrangler@3.90.0 r2 bucket create yeom-lab-files || echo "r2 이미 있음"
+
+      - name: 리소스 id 조회 → wrangler.toml 치환
+        run: |
+          D1_ID=$(curl -sf "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database?per_page=100" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            | jq -r '.result[] | select(.name=="yeom-lab-db") | .uuid')
+          KV_ID=$(curl -sf "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=100" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            | jq -r '[.result[] | select(.title | contains("yeom-lab"))][0].id')
+          echo "D1_ID=$D1_ID / KV_ID=$KV_ID"
+          test -n "$D1_ID" && test -n "$KV_ID" && test "$KV_ID" != "null"
+          sed -i "s/00000000-0000-0000-0000-000000000000/$D1_ID/" wrangler.toml
+          sed -i "s/00000000000000000000000000000000/$KV_ID/" wrangler.toml
+          if [ -n "${{ inputs.bot_username }}" ]; then
+            sed -i "s/REPLACE_WITH_NEW_BOT_USERNAME/${{ inputs.bot_username }}/" wrangler.toml
+          fi
+          sed -i "s/REPLACE_WITH_TEST_CHAT_ID/${{ inputs.test_chat_id }}/g" wrangler.toml
+
+      - name: D1 마이그레이션 적용 (재실행 시 중복 에러는 무시)
+        run: |
+          for f in migrations/*.sql; do
+            echo "=== $f"
+            npx wrangler@3.90.0 d1 execute yeom-lab-db --remote --file="$f" || true
+          done
+
+      - name: 배포
+        run: |
+          npx wrangler@3.90.0 deploy 2>&1 | tee deploy.log
+          URL=$(grep -o 'https://[a-zA-Z0-9.-]*workers\.dev' deploy.log | head -1)
+          test -n "$URL"
+          echo "WORKER_URL=$URL" >> "$GITHUB_ENV"
+          echo "✅ Worker URL: $URL"
+
+      - name: Worker 시크릿 등록 (등록된 GitHub Secret 만)
+        env:
+          TG: ${{ secrets.YEOMLAB_TELEGRAM_BOT_TOKEN }}
+          AK: ${{ secrets.ANTHROPIC_API_KEY }}
+          TV: ${{ secrets.TAVILY_API_KEY }}
+          AAI: ${{ secrets.ASSEMBLYAI_API_KEY }}
+        run: |
+          put() {
+            if [ -n "$2" ]; then
+              echo "$2" | npx wrangler@3.90.0 secret put "$1" && echo "✅ $1 등록"
+            else
+              echo "⏭️  $1 건너뜀 (GitHub Secret 미등록)"
+            fi
+          }
+          put TELEGRAM_BOT_TOKEN "$TG"
+          put ANTHROPIC_API_KEY "$AK"
+          put TAVILY_API_KEY "$TV"
+          put ASSEMBLYAI_API_KEY "$AAI"
+
+      - name: Webhook 연결 (봇 토큰 Secret 있을 때만)
+        env:
+          TG: ${{ secrets.YEOMLAB_TELEGRAM_BOT_TOKEN }}
+        run: |
+          if [ -z "$TG" ]; then echo "⏭️  YEOMLAB_TELEGRAM_BOT_TOKEN 미등록 — webhook 생략"; exit 0; fi
+          echo "setWebhook →"
+          curl -s "https://api.telegram.org/bot$TG/setWebhook?url=$WORKER_URL" | sed -E 's/[0-9]{7,}/***/g'
+          echo ""
+          echo "getWebhookInfo →"
+          curl -s "https://api.telegram.org/bot$TG/getWebhookInfo" | sed -E 's/[0-9]{7,}/***/g'
