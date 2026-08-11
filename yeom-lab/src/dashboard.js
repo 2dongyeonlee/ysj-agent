@@ -85,5 +85,8 @@ export async function dashboardResponse(env) {
     "<div class='foot'>yeom-lab · " + esc(today) + " 기준</div>" +
     "</body></html>";
 
-  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+  // no-store: 텔레그램 웹뷰/브라우저 캐시로 갱신이 안 보이는 문제 방지 — 열 때마다 최신 데이터.
+  return new Response(html, {
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  });
 }
