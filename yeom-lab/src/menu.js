@@ -38,8 +38,12 @@ export async function sendMainMenu(env, chatId) {
     [{ text: "📋 오늘 브리핑", callback_data: "menu_brief" }, { text: "🎙 회의록", callback_data: "menu_minutes" }],
     [{ text: "📁 프로젝트", callback_data: "menu_project" }, { text: "✅ Action Item", callback_data: "menu_ai" }],
   ];
-  if (env.DASHBOARD_URL && !String(chatId).startsWith("-")) {
-    rows.push([{ text: "📊 상황판", web_app: { url: env.DASHBOARD_URL } }]);
+  if (env.DASHBOARD_URL) {
+    // web_app 버튼은 텔레그램 정책상 개인 채팅 전용 → 그룹에서는 URL 버튼으로 열기(브라우저).
+    const isDM = !String(chatId).startsWith("-");
+    rows.push([isDM
+      ? { text: "📊 상황판", web_app: { url: env.DASHBOARD_URL } }
+      : { text: "📊 상황판", url: env.DASHBOARD_URL }]);
   }
   return sendMessage(env, chatId, "무엇을 확인하시겠습니까?", { reply_markup: { inline_keyboard: rows } });
 }
