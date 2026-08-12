@@ -11,7 +11,16 @@
 - Node.js 18 이상 (`node -v` 로 확인)
 - BotFather 로 만든 새 봇 토큰 (기존 yeom-lab/ysj-agent 봇과 겹치지 않는 별도 토큰 권장 —
   같은 토큰으로 웹훅과 폴링을 동시에 쓸 수 없습니다)
-- Claude API 키
+- **Ollama** (분류·요약·브리핑·회의록 생성용 무료 오픈소스 LLM을 이 PC에서 직접 돌립니다.
+  API 키도, 인터넷 전송도 필요 없습니다 — 텍스트가 이 PC 밖으로 나가지 않아 Claude API보다
+  보안 면에서 유리합니다):
+  1. https://ollama.com 에서 설치 프로그램 다운로드 후 설치
+  2. 설치 후 PowerShell/cmd 에서: `ollama pull qwen2.5:7b-instruct` (약 4.7GB 다운로드,
+     한 번만 하면 됨)
+  3. Ollama는 설치 시 백그라운드 서비스로 자동 등록되어 PC 켜질 때 같이 켜집니다. 수동으로
+     켜야 한다면 `ollama serve`
+  - 참고: 7B 모델은 RAM 16GB 이상 권장(8GB에서도 동작은 하나 느릴 수 있음). PC 사양이
+    낮으면 더 작은 모델(`qwen2.5:3b-instruct`)로 바꿔도 됩니다 — `.env`의 `OLLAMA_MODEL` 수정.
 
 ## 설치 및 실행
 
@@ -19,7 +28,7 @@
 cd yeom-lab-local
 npm install
 Copy-Item .env.example .env
-# .env 파일을 열어 TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY 등을 채운다
+# .env 파일을 열어 TELEGRAM_BOT_TOKEN 을 채운다 (Ollama 관련 값은 기본값 그대로 둬도 됨)
 npm start
 ```
 
@@ -43,6 +52,7 @@ migrations: 18건 적용 완료
 | 항목 | yeom-lab (Cloudflare) | yeom-lab-local |
 |---|---|---|
 | 텔레그램 연결 | 웹훅(외부에서 서버로 접속) | 장폴링(서버가 텔레그램에 계속 물어봄) — 외부 노출 불필요 |
+| 텍스트 생성(분류·요약·브리핑·회의록) | Claude API (유료, 클라우드 전송) | 로컬 Ollama·Qwen2.5 (무료, PC 밖으로 전송 안 됨) |
 | DB | D1 (Cloudflare) | 로컬 sqlite 파일 (`data/yeom-lab.db`) |
 | KV | Cloudflare KV | 같은 sqlite 파일의 `kv_store` 테이블 |
 | 파일 저장(녹음·문서 원본) | R2 | 로컬 폴더 (`data/r2/`) |
@@ -90,5 +100,11 @@ pm2-startup install   # PC 재부팅 시 자동 시작 (안내에 따라 진행)
 - **"getUpdates failed" 반복 출력** → `.env` 의 `TELEGRAM_BOT_TOKEN` 오타 확인, 인터넷 연결 확인.
 - **그룹방에서 반응 없음** → 기존과 동일하게, BotFather `/setprivacy` → Disable → 봇을
   방에서 내보냈다 재초대해야 합니다.
+- **"로컬 LLM(Ollama)에 연결할 수 없습니다" 응답만 옴** → Ollama가 안 켜져 있는 것입니다.
+  PowerShell에서 `ollama serve` 실행 후 다시 시도하세요. `ollama list` 로 모델이 실제
+  받아져 있는지도 확인해보세요(없으면 `ollama pull qwen2.5:7b-instruct`).
+- **답변이 너무 느리거나 PC가 버벅임** → 모델이 PC 사양에 비해 큽니다. `.env`의
+  `OLLAMA_MODEL` 을 `qwen2.5:3b-instruct` 로 바꾸고 `ollama pull qwen2.5:3b-instruct` 로
+  받은 뒤 재시작하세요.
 - **마이그레이션 오류로 시작이 안 됨** → `data/yeom-lab.db` 를 지우고(초기화됨) 다시
   `npm start` 하면 처음부터 다시 적용됩니다. 데이터가 있다면 먼저 백업하세요.

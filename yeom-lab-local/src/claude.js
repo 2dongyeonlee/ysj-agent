@@ -1,41 +1,38 @@
-// claude.js — Anthropic Messages API 래퍼.
+// claude.js — 텍스트 생성 래퍼. 다른 모든 파일은 이 함수 하나만 호출하므로,
+// 분류·요약·브리핑·회의록 프롬프트/로직은 전혀 바뀌지 않았다 — 실제 호출 대상만
+// Anthropic Claude API에서 로컬 Ollama(무료 오픈소스 LLM, PC에서 직접 실행)로 바꿨다.
 
-export const MODEL_FAST = "claude-haiku-4-5-20251001"; // 분류·단순작업
-// 실험용(yeom-lab): 비용 최소화를 위해 요약·브리핑도 Haiku 사용 (최저가: $1/$5 per 1M tokens)
-export const MODEL_SMART = "claude-haiku-4-5-20251001"; // 요약·브리핑
+export const MODEL_FAST = "qwen2.5:7b-instruct"; // 분류·단순작업
+export const MODEL_SMART = "qwen2.5:7b-instruct"; // 요약·브리핑
 
 export async function callClaude(env, userText, system = "", model = MODEL_FAST, maxTokens = 800) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-      "anthropic-beta": "prompt-caching-2024-07-31",
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      // 시스템 프롬프트를 캐시(반복 호출 시 입력 토큰 90% 할인). 짧으면 자동 미적용.
-      system: system
-        ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
-        : undefined,
-      messages: [{ role: "user", content: userText }],
-    }),
-  });
+  const baseUrl = env.OLLAMA_BASE_URL || "http://localhost:11434";
+  const useModel = env.OLLAMA_MODEL || model;
+  const messages = system
+    ? [{ role: "system", content: system }, { role: "user", content: userText }]
+    : [{ role: "user", content: userText }];
+
+  let res;
+  try {
+    res = await fetch(`${baseUrl}/api/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: useModel,
+        messages,
+        stream: false,
+        options: { num_predict: maxTokens },
+      }),
+    });
+  } catch (e) {
+    console.error("Ollama 연결 실패:", e && e.message);
+    return "로컬 LLM(Ollama)에 연결할 수 없습니다. Ollama가 실행 중인지 확인해주세요 (ollama serve).";
+  }
+
   const data = await res.json();
   if (!res.ok) {
-    console.error("Claude API error", JSON.stringify(data));
+    console.error("Ollama API error", JSON.stringify(data));
     return "응답 생성 중 오류가 발생했습니다.";
   }
-  return textFromClaude(data) || "응답을 생성하지 못했습니다.";
-}
-
-function textFromClaude(data) {
-  if (!data || !Array.isArray(data.content)) return "";
-  return data.content
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("\n")
-    .trim();
+  return (data && data.message && data.message.content && data.message.content.trim()) || "응답을 생성하지 못했습니다.";
 }

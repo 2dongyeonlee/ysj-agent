@@ -34,7 +34,6 @@ function requireEnv(name) {
 
 async function main() {
   requireEnv("TELEGRAM_BOT_TOKEN");
-  requireEnv("ANTHROPIC_API_KEY");
 
   const rawDb = new Database(DB_PATH);
   runMigrations(rawDb);
@@ -46,7 +45,11 @@ async function main() {
   };
 
   env.TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-  env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  // 텍스트 생성(분류·요약·브리핑·회의록)은 로컬 Ollama가 담당 — API 키 불필요.
+  env.OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
+  env.OLLAMA_MODEL = process.env.OLLAMA_MODEL || "";
+  // 선택 — 사진/PDF 문서 인식(docparse.js)만 아직 Anthropic Vision API를 씀. 안 쓰면 비워둬도 됨.
+  env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
   env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
   env.ASSEMBLYAI_API_KEY = process.env.ASSEMBLYAI_API_KEY || "";
   env.TAVILY_API_KEY = process.env.TAVILY_API_KEY || "";
