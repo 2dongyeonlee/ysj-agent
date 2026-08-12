@@ -1,0 +1,818 @@
+// voice.js — voice note -> STT (OpenAI whisper-1 verbose, fallback gpt-4o-transcribe)
+//            -> 분류·R2 백업·저장 -> 회의록 작성 -> Telegram.
+// STT provider isolated in transcribe() for later swap (e.g. CLOVA).
+
+import { callClaude, MODEL_SMART } from "./claude.js";
+import { sendMessage, senderName } from "./telegram.js";
+import { PERSONA_STYLE } from "./persona.js";
+import { saveFile, qPush, qShift, qLen } from "./db.js";
+import { buildR2Key } from "./collect.js";
+import { saveActionItems } from "./proactive.js";
+
+// 회의록 하단 버튼 — 안건 중심 탐색 구조. fileRowId(files.id)가 있으면 해당 회의록에 바인딩.
+export function minutesKeyboard(fileRowId) {
+  const rows = [];
+  if (fileRowId) {
+    rows.push([
+      { text: "✅ Action Item", callback_data: "ai:" + fileRowId },
+      { text: "🔊 전체 보기", callback_data: "full:" + fileRowId },
+    ]);
+  } else {
+    rows.push([{ text: "✅ Action Item", callback_data: "menu_ai" }]);
+  }
+  rows.push([{ text: "🏠 메뉴", callback_data: "menu_home" }]);
+  return { inline_keyboard: rows };
+}
+
+async function getFileUrl(env, fileId) {
+  const res = await fetch(
+    `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`
+  );
+  const data = await res.json();
+  if (!data.ok) throw new Error("getFile failed");
+  return `https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${data.result.file_path}`;
+}
+
+const STT_PROMPT = "SK하이닉스 커뮤니케이션 총괄의 회의/간담회 녹음입니다. 여러 명이 번갈아 발언합니다. 인명·직책·기관명(SK하이닉스, 환경재단, UNEP 등)·프로젝트명(넥서스, 서남권, ADR 등)·숫자·금액을 정확히 받아쓰세요.";
+const KOREAN_KEYTERMS = [
+  "SK하이닉스", "SK텔레콤", "커뮤니케이션총괄", "염성진", "권오혁", "이동연",
+  "용인", "서남권", "넥서스", "ADR", "HBM", "AI", "데이터센터",
+  "환경재단", "UNEP", "GGGI", "산업부", "기후부", "공정위", "국회", "BH",
+  "반도체", "재생에너지", "LNG", "SMR", "상생협약", "초과이익",
+];
+
+function looksBadTranscript(text) {
+  const body = String(text || "").replace(/\s+/g, " ").trim();
+  if (body.length < 20) return true;
+  const promptEcho = "SK하이닉스 커뮤니케이션 총괄의 회의";
+  const echoCount = body.split(promptEcho).length - 1;
+  if (echoCount >= 2) return true;
+  const words = body.split(/\s+/).filter(Boolean);
+  if (words.length >= 20) {
+    const unique = new Set(words);
+    if (unique.size / words.length < 0.18) return true;
+  }
+  return false;
+}
+
+function timeoutSignal(ms) {
+  const controller = new AbortController();
+  setTimeout(function () { controller.abort("timeout"); }, ms);
+  return controller.signal;
+}
+
+async function transcribeTextModel(env, audioBuf, filename, model, timeoutMs) {
+  const signal = timeoutSignal(timeoutMs || 25000);
+  const form = new FormData();
+  form.append("file", new Blob([audioBuf]), filename || "audio.ogg");
+  form.append("model", model);
+  form.append("language", "ko");
+  form.append("response_format", "text");
+  const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { "authorization": "Bearer " + env.OPENAI_API_KEY },
+    body: form,
+    signal,
+  });
+  if (!res.ok) throw new Error(model + " STT failed " + res.status + ": " + (await res.text()).slice(0, 300));
+  const t = (await res.text()).trim();
+  if (looksBadTranscript(t)) throw new Error("STT produced unusable transcript");
+  return { plain: t, timed: t };
+}
+
+async function transcribeAssemblyAI(env, audioBuf, filename, timeoutMs) {
+  const apiKey = env.ASSEMBLYAI_API_KEY;
+  if (!apiKey) throw new Error("ASSEMBLYAI_API_KEY missing");
+  const deadline = Date.now() + (timeoutMs || 240000);
+
+  const uploadRes = await fetch("https://api.assemblyai.com/v2/upload", {
+    method: "POST",
+    headers: { authorization: apiKey },
+    body: audioBuf,
+  });
+  if (!uploadRes.ok) throw new Error("AssemblyAI upload failed " + uploadRes.status + ": " + (await uploadRes.text()).slice(0, 300));
+  const uploaded = await uploadRes.json();
+  const audioUrl = uploaded.upload_url;
+  if (!audioUrl) throw new Error("AssemblyAI upload_url missing");
+
+  const createRes = await fetch("https://api.assemblyai.com/v2/transcript", {
+    method: "POST",
+    headers: { authorization: apiKey, "content-type": "application/json" },
+    body: JSON.stringify({
+      audio_url: audioUrl,
+      language_code: "ko",
+      speaker_labels: true,
+      keyterms_prompt: KOREAN_KEYTERMS,
+    }),
+  });
+  if (!createRes.ok) throw new Error("AssemblyAI transcript create failed " + createRes.status + ": " + (await createRes.text()).slice(0, 300));
+  const created = await createRes.json();
+  if (!created.id) throw new Error("AssemblyAI transcript id missing");
+
+  while (Date.now() < deadline) {
+    const pollRes = await fetch("https://api.assemblyai.com/v2/transcript/" + encodeURIComponent(created.id), {
+      headers: { authorization: apiKey },
+    });
+    if (!pollRes.ok) throw new Error("AssemblyAI transcript poll failed " + pollRes.status + ": " + (await pollRes.text()).slice(0, 300));
+    const data = await pollRes.json();
+    if (data.status === "completed") {
+      const plain = String(data.text || "").trim();
+      if (looksBadTranscript(plain)) throw new Error("AssemblyAI produced unusable transcript");
+      const utterances = Array.isArray(data.utterances) ? data.utterances : [];
+      const timed = utterances
+        .map(function (u) {
+          return String(u.speaker || "?") + ": " + String(u.text || "").trim();
+        })
+        .filter(function (line) { return line.replace(/^.: /, "").trim(); })
+        .join("\n");
+      return { plain, timed: timed || plain };
+    }
+    if (data.status === "error") throw new Error("AssemblyAI STT failed: " + (data.error || "unknown error"));
+    await new Promise(function (resolve) { setTimeout(resolve, 5000); });
+  }
+  throw new Error("AssemblyAI STT timeout");
+}
+
+// AssemblyAI 전사 제출(업로드+요청)만. 폴링하지 않고 transcript_id 반환.
+async function submitAssemblyAI(env, audioBuf) {
+  const apiKey = env.ASSEMBLYAI_API_KEY;
+  if (!apiKey) throw new Error("ASSEMBLYAI_API_KEY missing");
+
+  const uploadRes = await fetch("https://api.assemblyai.com/v2/upload", {
+    method: "POST",
+    headers: { authorization: apiKey },
+    body: audioBuf,
+  });
+  if (!uploadRes.ok) throw new Error("AAI upload " + uploadRes.status + ": " + (await uploadRes.text()).slice(0, 200));
+  const audioUrl = (await uploadRes.json()).upload_url;
+  if (!audioUrl) throw new Error("AAI upload_url missing");
+
+  const createRes = await fetch("https://api.assemblyai.com/v2/transcript", {
+    method: "POST",
+    headers: { authorization: apiKey, "content-type": "application/json" },
+    body: JSON.stringify({
+      audio_url: audioUrl,
+      language_code: "ko",
+      speaker_labels: true,
+      keyterms_prompt: KOREAN_KEYTERMS,
+    }),
+  });
+  if (!createRes.ok) throw new Error("AAI create " + createRes.status + ": " + (await createRes.text()).slice(0, 200));
+  const id = (await createRes.json()).id;
+  if (!id) throw new Error("AAI transcript id missing");
+  return id;
+}
+
+// AssemblyAI 전사 1회 폴링. 반환 { status, plain, timed }.
+// status: "completed" | "processing" | "queued" | "error"
+async function pollAssemblyAI(env, transcriptId) {
+  const apiKey = env.ASSEMBLYAI_API_KEY;
+  const res = await fetch("https://api.assemblyai.com/v2/transcript/" + encodeURIComponent(transcriptId), {
+    headers: { authorization: apiKey },
+  });
+  if (!res.ok) return { status: "processing" }; // 일시 오류는 다음 틱 재시도
+  const data = await res.json();
+  if (data.status === "completed") {
+    const plain = String(data.text || "").trim();
+    const utterances = Array.isArray(data.utterances) ? data.utterances : [];
+    const timed = utterances
+      .map(function (u) { return String(u.speaker || "?") + ": " + String(u.text || "").trim(); })
+      .filter(function (line) { return line.replace(/^.: /, "").trim(); })
+      .join("\n");
+    return { status: "completed", plain, timed: timed || plain };
+  }
+  if (data.status === "error") return { status: "error", error: data.error || "unknown" };
+  return { status: data.status || "processing" };
+}
+
+// STT. timeoutMs 로 모델별 제한시간을 조절(큐는 넉넉히, 웹훅은 짧게).
+async function transcribe(env, audioBuf, filename, timeoutMs) {
+  const t = timeoutMs || 24000;
+  if (env.ASSEMBLYAI_API_KEY) {
+    try {
+      return await transcribeAssemblyAI(env, audioBuf, filename, t);
+    } catch (e) {
+      console.error("AssemblyAI STT error", e && e.message);
+    }
+  }
+  try {
+    return await transcribeTextModel(env, audioBuf, filename, "gpt-4o-transcribe", t);
+  } catch (e) {
+    console.error("gpt-4o-transcribe error", e && e.message);
+    if (/abort|timeout/i.test(String((e && (e.name || e.message)) || ""))) throw e;
+  }
+  try {
+    return await transcribeTextModel(env, audioBuf, filename, "gpt-4o-mini-transcribe", t);
+  } catch (e) {
+    console.error("gpt-4o-mini-transcribe error", e && e.message);
+    if (/abort|timeout/i.test(String((e && (e.name || e.message)) || ""))) throw e;
+  }
+  return await transcribeTextModel(env, audioBuf, filename, "whisper-1", t);
+}
+
+const VOICE_SYSTEM = PERSONA_STYLE + "\n\n" +
+  "[작업] 아래는 회의/간담회 녹음을 받아쓴 전문(全文)이다. 이것은 요약이 아니라 회의록이다. 염 사장이 회의에 안 들어가고도 논의 흐름, 쟁점, 결정, 후속 조치를 복원할 수 있도록 충실하고 상세하게 작성하라.\n\n" +
+  "[원칙]\n" +
+  "- '요약'이라는 제목이나 표현을 쓰지 마라. 출력물의 성격은 반드시 '회의록'이다.\n" +
+  "- 안건별 요지는 핵심만 압축하되, 결정사항과 미결사항은 절대 빠뜨리지 마라. 발화자 중계식 나열을 금지한다.\n" +
+  "- 발화자가 여러 명이면 화자별로 누가 어떤 입장·의견을 냈는지 구분하라. 이름이 안 나오면 화자A·화자B·화자C로 구분하되, 직책·맥락으로 추정되면 (추정) 표기와 함께 명시하라.\n" +
+  "- 받아쓰기에 없는 내용을 지어내지 마라. 불명확하면 '불명확'으로 표기하라.\n" +
+  "- 숫자·날짜·금액·고유명사(인명·기관·프로젝트명)는 빠짐없이 그대로 살려라.\n" +
+  "- 확정된 결정과 검토/논의 중인 사항을 반드시 구분하라.\n" +
+  "- Action Item은 담당자, 해야 할 일, 기한이 들리면 반드시 분리해 적어라.\n" +
+  "- 모든 안건은 \"→ 결정:\" 또는 \"→ 미결:\"로 결론을 명시해 닫아라. 결론 없는 나열을 금지한다.\n\n" +
+  "[출력 형식] HTML 태그 <b>,<u> 만 사용. 부등호(<,>)를 본문 텍스트에 쓰지 말 것. 이모지를 쓰지 말 것. 섹션 순서 반드시 유지. 각 섹션 사이 빈 줄.\n" +
+  "[강조 규칙]\n" +
+  "- <b>: 섹션 헤더, 안건명, 결정 결과 동사(발주/확정/안 함 등). 골격 식별용.\n" +
+  "- <u>: 날짜·기한·금액, 사장이 결정·확인해야 할 미결 항목. 행동 신호용.\n" +
+  "- 한 줄에 강조는 최대 2개. 인명·일반명사는 강조하지 않는다.\n\n" +
+  "■ <b>배경</b>\n- 회의 제목·일시·참석·맥락 1~2줄\n\n" +
+  "─────\n" +
+  "■ <b>주요 안건</b>\n• <b>{안건명}</b>\n  - {내용·논의·쟁점}\n  - → 결정: {결론} 또는 → <u>미결</u>: {남은 것}\n\n" +
+  "─────\n" +
+  "■ <b>주요 내용</b>\n- {안건 전반의 핵심 결정·수치·쟁점 요약}\n\n" +
+  "─────\n" +
+  "■ <b>Action Item</b>\n- {담당자}: {할 일} / <u>{기한·시점}</u>";
+
+const MEETING_JSON_SYSTEM = PERSONA_STYLE + "\n\n" +
+  "아래 받아쓰기 전문을 읽고 JSON만 반환하라. 마크다운 코드블록 금지.\n" +
+  "어떤 머리말·설명·인사도 붙이지 마라('아래는 ... JSON입니다' 같은 문장 금지). 응답은 반드시 '{' 로 시작해 '}' 로 끝낸다.\n" +
+  "반환 스키마는 정확히 {\"short\":\"...\",\"full\":\"...\"} 이다.\n\n" +
+  "[공통 원칙]\n" +
+  "- 임원이 사장에게 올리는 보고용 회의록이다. 발화 복원·중복·군더더기 금지, 결론 중심으로 간결히.\n" +
+  "- 이모지·마크다운(**, ##)·표 금지. HTML <b>, <u>만 사용. 헤더는 ■ <b>제목</b> 형식. 구분선은 ───── 만.\n" +
+  "- 추측 금지. 자료에 없으면 항목을 비우고, 핵심에 영향 주는 미결만 '미결:'로 1줄.\n" +
+  "- 강조 규칙: 인명·직책(송 사장, 회장님, 장관 등)과 핵심 고유명사는 <b>로 감싼다. 결정사항·기한·금액은 <u>로 감싼다. 한 항목에 강조는 2개 이내.\n\n" +
+  "[화자분리 원칙]\n" +
+  "- 입력에 'A:', 'B:', 'Speaker 1:', '화자1:' 같은 라벨이 있으면 실제 이름이 아니라 화자 구분 단서로만 사용한다.\n" +
+  "- 화자 라벨을 그대로 나열하지 말고, 의견 대립·합의·결정 흐름을 복원하는 근거로 써라.\n" +
+  "- 맥락상 역할이 분명할 때만 역할을 적고, 불명확하면 '발언자 A'처럼 자연스럽게 표기한다.\n" +
+  "- 회의록은 전사문이 아니라 결정·미결·후속조치 중심 보고서다.\n\n" +
+  "[short 규칙] 텔레그램 즉시 표시용. 사장이 30초 내 읽을 분량. '요약'이라는 단어를 쓰지 않는다.\n" +
+  "형식(이 순서 고정):\n" +
+  "■ <b>배경</b>\n" +
+  "- 회의 제목·일시·참석·맥락을 1~2줄로 압축. 없으면 미상.\n\n" +
+  "─────\n" +
+  "■ <b>주요 안건</b>\n" +
+  "• <b>{안건명}</b>\n" +
+  "  - {내용·논의·쟁점 1}\n" +
+  "  - → <u>결정: 확정된 것</u> 또는 → 미결: 남은 것\n\n" +
+  "─────\n" +
+  "■ <b>주요 내용</b>\n" +
+  "- 안건 전반의 핵심 결정·수치·쟁점 요약\n\n" +
+  "─────\n" +
+  "■ <b>Action Item</b>\n" +
+  "- <b>{담당}</b>: {할 일} / <u>{기한}</u>. 없으면 '없음'\n" +
+  "─────\n" +
+  "전체 회의록 필요 시 /minutes\n\n" +
+  "[full 규칙] 상세 회의록이되 보고용으로 간결. short 와 같은 구조·순서를 따른다.\n" +
+  "- 구조는 반드시 ■ <b>배경</b> → ■ <b>주요 안건</b> → ■ <b>주요 내용</b> → ■ <b>Action Item</b> 순서.\n" +
+  "- 주요 안건은 큰 불릿(•)=안건 제목(<b>굵게</b>), 하위 불릿(-)=내용·논의·쟁점. 안건당 4~6줄을 넘기지 않는다.\n" +
+  "- 주요 내용은 안건 전반의 핵심 결정·수치·쟁점만 요약한다. 발언 나열·중복 금지.\n" +
+  "- 인명·직책은 <b>, 결정·기한·금액·미결은 <u>. 구분선은 ─────, 이모지·마크다운 금지.\n" +
+  "반드시 {\"short\":\"...\",\"full\":\"...\"} 형식의 JSON만 출력하라. 코드블록·설명·기타 텍스트 금지. short와 full 둘 다 비우지 말 것.";
+
+// 녹음 메시지에서 오디오 객체 추출 (mime 또는 파일 확장자로 판별).
+export function pickAudio(msg) {
+  if (msg.voice) return msg.voice;
+  if (msg.audio) return msg.audio;
+  if (msg.document) {
+    const mime = msg.document.mime_type || "";
+    const name = msg.document.file_name || "";
+    if (/audio/i.test(mime) || /\.(ogg|oga|mp3|m4a|wav|aac|opus|flac|amr)$/i.test(name)) return msg.document;
+  }
+  return null;
+}
+
+// 녹음 접수 — STT는 여기서 하지 않는다. R2에 원본을 저장하고 files 행을 '대기'(text='')로 남긴 뒤
+// 즉시 반환한다. 실제 받아쓰기는 매분 도는 Cron(runVoiceQueue)이 처리한다.
+// (긴 녹음 STT는 웹훅 백그라운드 실행 한도를 넘겨 멈추므로, 실행시간이 긴 Cron으로 분리.)
+export async function handleVoice(env, chatId, msg, replyToUser = false) {
+  const voice = pickAudio(msg);
+  if (!voice) return;
+  if (voice.file_size && voice.file_size > 20 * 1024 * 1024) {
+    return sendMessage(env, chatId, "녹음 파일이 너무 큽니다 (텔레그램 봇 한계 20MB). 10분 내외로 잘라 보내주세요.");
+  }
+
+  const sender = senderName(msg);
+  const filename = voice.file_name || "voice.m4a";
+  const meta = { category: "", project: "", filename, sender, isPhoto: false };
+  let audioBuf, r2Key = "";
+  try {
+    const url = await getFileUrl(env, voice.file_id);
+    audioBuf = await (await fetch(url)).arrayBuffer();
+  } catch (e) {
+    console.error("voice download error", e && e.message);
+    return sendMessage(env, chatId, "녹음 파일을 내려받지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  }
+
+  // 원본을 R2에 저장하고 files 행을 대기 상태(text='')로 남긴다.
+  try {
+    if (env.R2 && audioBuf) {
+      r2Key = buildR2Key(meta);
+      await env.R2.put(r2Key, audioBuf, {
+        customMetadata: { category: "", project: "", sender: sender || "", filename },
+      });
+    }
+    // (file_id, chat_id) 기준 — 같은 녹음을 여러 방에 전달하면 file_id 가 같으므로
+    // chat_id 까지 봐야 방마다 자기 행이 생긴다(전사를 올린 방으로 돌려보내기 위함).
+    const upd = await env.DB.prepare(
+      "UPDATE files SET r2_key = ?, sender = ?, doc_type = 'meeting' WHERE file_id = ? AND chat_id = ?"
+    ).bind(r2Key, sender, voice.file_id, String(msg.chat.id)).run();
+    if (!upd.meta || !upd.meta.changes) {
+      await saveFile(env, {
+        chat_id: msg.chat.id,
+        file_id: voice.file_id,
+        r2_key: r2Key,
+        filename,
+        text: "",
+        sender,
+        doc_type: "meeting",
+      });
+    }
+  } catch (e) {
+    console.error("voice enqueue save error", e && e.message);
+  }
+
+  // 이미 전사된 녹음을 다시 보낸 경우(같은 file_id) → 재전사하지 않고 저장된 전사로
+  // '그 녹음'의 회의록을 바로 작성한다(tmin 큐에 해당 전사를 직접 실어 정확히 그 녹음으로).
+  let existingText = "";
+  try {
+    const ex = await env.DB.prepare(
+      "SELECT text FROM files WHERE file_id = ? AND chat_id = ? AND text != '' AND text NOT LIKE '[받아쓰기 실패%' ORDER BY id DESC LIMIT 1"
+    ).bind(voice.file_id, String(msg.chat.id)).first();
+    existingText = (ex && ex.text) || "";
+  } catch (e) { console.error("voice existing-text check error", e && e.message); }
+
+  if (existingText && existingText.length >= 20) {
+    await qPush(env, "tmin", { chatId: String(chatId), text: String(existingText).slice(0, 16000) });
+    if (replyToUser) await sendMessage(env, chatId, "🎙 이미 받아쓴 녹음입니다. 회의록을 작성 중입니다… 1~2분 후 도착합니다.");
+    return;
+  }
+
+  if (replyToUser) {
+    await sendMessage(env, chatId,
+      "🎙 녹음을 받았습니다. 받아쓰는 중이며 1~2분 내 회의록이 자동으로 도착합니다. (긴 녹음일수록 조금 더 걸려요)\n" +
+      "더 상세한 전체 회의록이 필요하면 도착 후 /minutes 를 보내주세요.");
+  }
+}
+
+const VOICE_AUDIO_LIKE =
+  "(filename LIKE '%.m4a' OR filename LIKE '%.ogg' OR filename LIKE '%.oga' " +
+  "OR filename LIKE '%.mp3' OR filename LIKE '%.wav' OR filename LIKE '%.aac' " +
+  "OR filename LIKE '%.opus' OR filename LIKE '%.amr' OR filename LIKE '%.flac' " +
+  "OR filename LIKE '%voice%' OR filename LIKE '%녹음%')";
+
+function minutesTargetChat(env, fallbackChatId) {
+  // 녹음을 올린 방(fallbackChatId)으로 회신한다. 단체방에 올리면 단체방으로,
+  // 개인톡에 올리면 개인톡으로. BRIEFING_TARGET_ID는 값이 없을 때만 폴백.
+  return String(fallbackChatId || (env && env.BRIEFING_TARGET_ID) || "");
+}
+
+// 2분마다 Cron 이 호출 — 대기 중인 녹음 1건을 받아쓰기. Cron 핸들러는 웹훅보다 실행시간이 길어
+// 긴 녹음도 처리 가능. 동시 실행은 KV 락으로 막고, 반복 실패는 시도 횟수로 끊는다.
+export async function runVoiceQueue(env) {
+  // 빈 큐면 lock(KV put) 을 쓰기 전에 즉시 종료한다 — 처리할 게 있을 때만 lock 획득(KV 절약).
+  const mjLen = await qLen(env, "mj");
+  const vqLen = await qLen(env, "vq");
+  const fpLen = await qLen(env, "fp");
+  let hasWork = !!(mjLen || vqLen || fpLen);
+  if (!hasWork && env.ASSEMBLYAI_API_KEY) {
+    const p = await env.DB.prepare(
+      "SELECT 1 FROM files WHERE aai_id IS NOT NULL AND aai_id != '' AND (text IS NULL OR text = '') " +
+      "AND created_at >= datetime('now','-24 hours') LIMIT 1"
+    ).first();
+    if (p) hasWork = true;
+  }
+  if (!hasWork) {
+    const c = await env.DB.prepare(
+      "SELECT 1 FROM files WHERE (text IS NULL OR text = '') AND r2_key != '' AND " + VOICE_AUDIO_LIKE +
+      " AND created_at >= datetime('now','-2 hours') LIMIT 1"
+    ).first();
+    if (c) hasWork = true;
+  }
+  if (!hasWork) return; // 처리할 항목 없음 → KV put 없이 종료
+
+  if (await env.STATE.get("vq:lock")) return; // 이미 처리 중
+  await env.STATE.put("vq:lock", "1", { expirationTtl: 300 });
+  try {
+    // 1) 회의록 작성 대기 작업 우선 처리(사용자가 기다리는 중). 한 번에 1건.
+    const mjChat = await qShift(env, "mj");
+    if (mjChat) {
+      await generateMinutes(env, String(mjChat));
+      return;
+    }
+
+    // 2) AssemblyAI 재폴링 우선: 이미 제출됐고(aai_id 있음) 아직 전사 안 된 행을 1회 폴링.
+    if (env.ASSEMBLYAI_API_KEY) {
+      const pend = (await env.DB.prepare(
+        "SELECT id, chat_id, file_id, aai_id, aai_polls, sender FROM files " +
+        "WHERE aai_id IS NOT NULL AND aai_id != '' AND (text IS NULL OR text = '') " +
+        "AND created_at >= datetime('now','-24 hours') ORDER BY id ASC LIMIT 1"
+      ).first());
+      if (pend) {
+        const polls = (pend.aai_polls || 0) + 1;
+        // 최대 폴링 횟수 초과(약 40분) → 실패 처리
+        if (polls > 40) {
+          await env.DB.prepare("UPDATE files SET text = ?, doc_type = 'meeting' WHERE id = ?")
+            .bind("[받아쓰기 실패: 시간 초과]", pend.id).run();
+          await sendMessage(env, minutesTargetChat(env, pend.chat_id),
+            "받아쓰기가 시간 내 끝나지 않았습니다. 녹음을 10분 내외로 나눠 다시 보내주세요.");
+          return;
+        }
+        await env.DB.prepare("UPDATE files SET aai_polls = ? WHERE id = ?").bind(polls, pend.id).run();
+        let r;
+        try { r = await pollAssemblyAI(env, pend.aai_id); }
+        catch (e) { console.error("AAI poll error", pend.id, e && e.message); return; }
+        if (r.status === "completed") {
+          const transcript = (r.plain || "").trim();
+          const timed = (r.timed || "").trim();
+          if (!transcript) {
+            await env.DB.prepare("UPDATE files SET text = ? WHERE id = ?").bind("[받아쓰기 실패]", pend.id).run();
+            await sendMessage(env, minutesTargetChat(env, pend.chat_id), "받아쓰기 결과가 비어 있습니다. 다시 보내주세요.");
+            return;
+          }
+          await env.DB.prepare("UPDATE files SET text = ?, timed_text = ?, doc_type = 'meeting' WHERE id = ?")
+            .bind(transcript.slice(0, 16000), timed.slice(0, 16000), pend.id).run();
+          await qPush(env, "mj", String(pend.chat_id), true);
+          await sendMessage(env, minutesTargetChat(env, pend.chat_id), "🎙 받아쓰기 완료. 회의록을 작성 중입니다… 잠시 후 도착합니다.");
+          return;
+        }
+        if (r.status === "error") {
+          await env.DB.prepare("UPDATE files SET text = ? WHERE id = ?").bind("[받아쓰기 실패]", pend.id).run();
+          await sendMessage(env, minutesTargetChat(env, pend.chat_id), "받아쓰기에 실패했습니다(음질·형식 문제일 수 있음). 다시 보내주세요.");
+          return;
+        }
+        // processing/queued → 다음 틱에서 다시 폴링
+        return;
+      }
+    }
+
+    // 3) 제출 대기 처리: 아직 AssemblyAI에 안 보낸 녹음을 업로드+전사요청만(폴링 안 함).
+    const cands = (await env.DB.prepare(
+      "SELECT id, chat_id, file_id, r2_key, filename, sender FROM files " +
+      "WHERE (text IS NULL OR text = '') AND (aai_id IS NULL OR aai_id = '') AND r2_key != '' AND " + VOICE_AUDIO_LIKE + " " +
+      "AND NOT EXISTS (SELECT 1 FROM files f2 WHERE f2.file_id = files.file_id AND f2.text != '') " +
+      "AND created_at >= datetime('now','-24 hours') ORDER BY id ASC LIMIT 6"
+    ).all()).results || [];
+    let row = null;
+    for (const c of cands) {
+      if (await env.STATE.get("vq:cool:" + c.id)) continue;
+      row = c; break;
+    }
+    if (!row) return;
+    const chatId = row.chat_id;
+    await env.STATE.put("vq:cool:" + row.id, "1", { expirationTtl: 360 });
+
+    const attKey = "vq:att:" + row.id;
+    const att = parseInt((await env.STATE.get(attKey)) || "0", 10);
+    if (att >= 2) {
+      await env.DB.prepare("UPDATE files SET text = ?, doc_type = 'meeting' WHERE id = ?").bind("[받아쓰기 실패]", row.id).run();
+      await sendMessage(env, minutesTargetChat(env, chatId), "받아쓰기에 반복 실패했습니다. 10분 내외로 나눠 다시 보내주세요. (원본은 저장돼 있습니다)");
+      return;
+    }
+    await env.STATE.put(attKey, String(att + 1), { expirationTtl: 86400 });
+
+    // R2에서 원본 로드 후 제출
+    let audioBuf;
+    try {
+      const obj = await env.R2.get(row.r2_key);
+      if (!obj) throw new Error("R2 object missing");
+      audioBuf = await obj.arrayBuffer();
+    } catch (e) {
+      console.error("voice R2 load error", row.id, e && e.message);
+      return;
+    }
+
+    // AssemblyAI 제출(키 있으면). 없으면 기존 OpenAI 동기 전사로 폴백(짧은 녹음).
+    if (env.ASSEMBLYAI_API_KEY) {
+      try {
+        const tid = await submitAssemblyAI(env, audioBuf);
+        await env.DB.prepare("UPDATE files SET aai_id = ?, aai_polls = 0 WHERE id = ?").bind(tid, row.id).run();
+        await sendMessage(env, minutesTargetChat(env, chatId), "🎙 녹음을 받았습니다. 받아쓰는 중이며 회의록이 자동으로 도착합니다. (긴 녹음일수록 조금 더 걸려요)");
+      } catch (e) {
+        console.error("AAI submit error", row.id, e && e.message);
+        // 제출 실패 → 다음 틱 재시도(att로 제한)
+      }
+      return;
+    }
+
+    // OpenAI 폴백(키 없을 때, 짧은 녹음만 현실적)
+    let transcript = "", timedTranscript = "";
+    try {
+      const tr = await transcribe(env, audioBuf, row.filename, 240000);
+      transcript = (tr.plain || "").trim();
+      timedTranscript = (tr.timed || "").trim();
+    } catch (e) {
+      console.error("voice queue STT error", row.id, e && e.message);
+      return;
+    }
+    if (!transcript) return;
+    await env.DB.prepare("UPDATE files SET text = ?, timed_text = ?, doc_type = 'meeting' WHERE id = ?")
+      .bind(transcript.slice(0, 16000), timedTranscript.slice(0, 16000), row.id).run();
+    await qPush(env, "mj", String(chatId), true);
+    await sendMessage(env, minutesTargetChat(env, chatId), "🎙 받아쓰기 완료. 회의록을 작성 중입니다… 잠시 후 도착합니다.");
+  } finally {
+    await env.STATE.delete("vq:lock");
+  }
+}
+
+function parseJsonObject(raw) {
+  const cleaned = String(raw || "").replace(/```json|```/g, "").trim();
+  try { return JSON.parse(cleaned); } catch {}
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start !== -1 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
+  throw new Error("meeting JSON parse failed");
+}
+
+function fallbackShortMinutes(transcript) {
+  const first = String(transcript || "").replace(/\s+/g, " ").trim().slice(0, 240);
+  return [
+    "■ <b>배경</b>",
+    "- 회의 내용 확인",
+    "─────",
+    "■ <b>주요 안건</b>",
+    "• <b>회의 내용</b>",
+    "  - " + (first || "전사 내용 확인 필요"),
+    "  - → 미결: 상세 회의록 생성 필요",
+    "",
+    "■ <b>주요 내용</b>",
+    "- 전사 내용 확인 필요",
+    "",
+    "■ <b>Action Item</b>",
+    "- 없음",
+    "─────",
+    "전체 회의록 필요 시 /minutes",
+  ].join("\n");
+}
+
+const ASK_META = "\n\n■ <b>보강 안내</b>\n날짜·참석 명단·주요 아젠다를 알려주시면 회의록에 반영해 다시 작성해 드립니다.\n예) 6/23, 염성진·권오혁·이동연, 안건: AX 전략";
+
+export async function withMetaFollowup(env, chatId, fileId, minutesText) {
+  let out = String(minutesText || "");
+  if (/미상|미정/.test(out)) {
+    if (fileId) {
+      await env.STATE.put("mctx:" + chatId, String(fileId), { expirationTtl: 1800 });
+    }
+    out += ASK_META;
+  }
+  return out;
+}
+
+export async function createMeetingMinutes(env, transcript) {
+  const raw = await callClaude(env,
+    "받아쓰기 전문:\n" + String(transcript || "").slice(0, 16000),
+    MEETING_JSON_SYSTEM,
+    MODEL_SMART,
+    3600
+  );
+  let parsed;
+  try {
+    parsed = parseJsonObject(raw);
+  } catch (e) {
+    console.error("meeting minutes JSON parse error", e && e.message);
+    // 머리말("아래는 ... JSON입니다.")이나 토큰 잘림으로 JSON이 깨져도
+    // short/full 문자열 필드만 정규식으로 건져 깔끔히 쓴다(원본 JSON 노출 방지).
+    const short = extractJsonString(raw, "short") || fallbackShortMinutes(transcript);
+    const full = extractJsonString(raw, "full") || null;
+    return { short, full };
+  }
+  const short = String(parsed.short || "").trim() || fallbackShortMinutes(transcript);
+  const full = String(parsed.full || "").trim() || null;
+  return { short, full };
+}
+
+// 깨진/잘린 JSON에서 "key":"...값..." 의 문자열 값만 추출(이스케이프 복원).
+function extractJsonString(raw, key) {
+  const m = String(raw || "").match(new RegExp('"' + key + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"'));
+  if (!m) return "";
+  return m[1]
+    .replace(/\\n/g, "\n").replace(/\\t/g, "\t")
+    .replace(/\\"/g, '"').replace(/\\\\/g, "\\")
+    .trim();
+}
+
+// reply 지점 기준으로 위로 N개 메시지를 묶어 회의록(발신자 무관). "위에 3개 요약" 용.
+// reply 메시지를 못 찾으면 최근 N개로 폴백. LLM 생성은 Cron 큐(tmin)로.
+export async function summarizeMessagesUpTo(env, chatId, repliedMsg, n) {
+  const lim = Math.max(1, Math.min(parseInt(n, 10) || 3, 100));
+  let merged = "";
+  try {
+    let anchorId = null;
+    if (repliedMsg && repliedMsg.message_id) {
+      const anchor = await env.DB.prepare(
+        "SELECT id FROM messages WHERE chat_id = ? AND message_id = ? LIMIT 1"
+      ).bind(String(chatId), String(repliedMsg.message_id)).first();
+      if (anchor) anchorId = anchor.id;
+    }
+    const sql = anchorId != null
+      ? "SELECT sender, text FROM messages WHERE chat_id = ? AND id <= ? AND text != '' AND text NOT LIKE '/%' ORDER BY id DESC LIMIT ?"
+      : "SELECT sender, text FROM messages WHERE chat_id = ? AND text != '' AND text NOT LIKE '/%' ORDER BY id DESC LIMIT ?";
+    const binds = anchorId != null ? [String(chatId), anchorId, lim] : [String(chatId), lim];
+    const { results } = await env.DB.prepare(sql).bind(...binds).all();
+    merged = (results || []).reverse()
+      .map(function (r) { return (r.sender ? r.sender + ": " : "") + r.text; })
+      .join("\n");
+  } catch (e) {
+    console.error("summarizeMessagesUpTo query error", e && e.message);
+    return sendMessage(env, chatId, "메시지를 불러오는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+  }
+  // anchor 못 찾았고 묶을 게 부족하면 reply 본문이라도 사용
+  if (merged.length < 30) merged = String((repliedMsg && (repliedMsg.text || repliedMsg.caption)) || "").trim();
+  if (merged.length < 30) return sendMessage(env, chatId, "묶을 회의 내용이 부족합니다.");
+  await qPush(env, "tmin", { chatId: String(chatId), text: merged.slice(0, 16000) });
+  return sendMessage(env, chatId,
+    "📝 지목하신 지점 기준 " + lim + "개를 묶어 회의록을 작성하는 중입니다... 1~2분 후 도착합니다.");
+}
+
+// 텍스트 메시지 reply → 같은 발신자가 연속으로 올린 블록을 묶어 회의록.
+// LLM 생성은 웹훅 시간초과 방지를 위해 Cron 큐(tmin)로 보낸다.
+export async function summarizeMessageBlock(env, chatId, repliedMsg) {
+  let merged = "";
+  try {
+    const anchor = await env.DB.prepare(
+      "SELECT id, sender FROM messages WHERE chat_id = ? AND message_id = ? LIMIT 1"
+    ).bind(String(chatId), String(repliedMsg.message_id || "")).first();
+    if (anchor) {
+      const { results } = await env.DB.prepare(
+        "SELECT text FROM messages WHERE chat_id = ? AND sender = ? AND text != '' " +
+        "AND text NOT LIKE '/%' AND id BETWEEN ? AND ? ORDER BY id ASC"
+      ).bind(String(chatId), anchor.sender, anchor.id - 40, anchor.id + 40).all();
+      merged = (results || []).map(function (r) { return r.text; }).join("\n");
+    }
+  } catch (e) {
+    console.error("summarizeMessageBlock query error", e && e.message);
+  }
+  if (merged.length < 30) merged = String(repliedMsg.text || repliedMsg.caption || "").trim();
+  if (merged.length < 30) return sendMessage(env, chatId, "묶을 회의 내용이 부족합니다.");
+  await qPush(env, "tmin", { chatId: String(chatId), text: merged.slice(0, 16000) });
+  return sendMessage(env, chatId,
+    "📝 회의 내용을 묶어 회의록을 작성하는 중입니다... 1~2분 후 도착합니다.");
+}
+
+// 녹음 없이 최근 텍스트 대화를 묶어 회의록으로 정리. 슬래시 명령은 제외.
+export async function summarizeRecentMessages(env, chatId, n) {
+  const lim = Math.max(1, Math.min(parseInt(n, 10) || 30, 100));
+  let results;
+  try {
+    ({ results } = await env.DB.prepare(
+      "SELECT sender, text FROM messages WHERE chat_id = ? AND text != '' " +
+      "AND text NOT LIKE '/%' ORDER BY id DESC LIMIT ?"
+    ).bind(String(chatId), lim).all());
+  } catch (e) {
+    console.error("summarizeRecentMessages query error", e && e.message);
+    return sendMessage(env, chatId, "메시지를 불러오는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+  }
+  if (!results || !results.length) return sendMessage(env, chatId, "요약할 최근 대화가 없습니다.");
+  const merged = results.reverse()
+    .map(function (r) { return (r.sender ? r.sender + ": " : "") + r.text; })
+    .join("\n");
+  if (merged.length < 30) return sendMessage(env, chatId, "요약할 내용이 충분하지 않습니다.");
+  // 회의록 생성(LLM)은 웹훅 백그라운드 시간초과 위험 → KV에 싣고 매분 Cron이 처리.
+  await qPush(env, "tmin", { chatId: String(chatId), text: merged.slice(0, 16000) });
+  return sendMessage(env, chatId,
+    "📝 최근 " + results.length + "개 대화로 회의록을 작성하는 중입니다... 1~2분 후 도착합니다.");
+}
+
+// Cron 이 호출 — 대기 중인 텍스트 회의록 작업(tmin:*)을 생성해 전송.
+export async function runTextMinutesQueue(env) {
+  let job;
+  try { job = await qShift(env, "tmin"); }
+  catch (e) { console.error("text minutes shift error", e && e.message); return; }
+  if (!job) return;
+  const chatId = job.chatId;
+  const merged = job.text;
+  if (!merged) return;
+  try {
+    const minutes = await createMeetingMinutes(env, merged);
+    let body = (minutes && (minutes.full || minutes.short)) || "회의록 생성에 실패했습니다. 다시 시도해주세요.";
+    if (/미상|미정/.test(body)) body += "\n\n날짜·참석 명단·주요 아젠다를 알려주시면 반영해 다시 작성해 드립니다.";
+    try { await saveActionItems(env, body); } catch (e) { console.error("tmin action items", e && e.message); }
+    await sendMessage(env, chatId, body, { reply_markup: minutesKeyboard(null) });
+  } catch (e) {
+    console.error("runTextMinutesQueue error", e && (e.stack || e.message));
+    await sendMessage(env, chatId, "회의록 작성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+  }
+}
+
+async function saveMeetingInsight(env, row) {
+  await env.DB.prepare(
+    "INSERT INTO insights (chat_id, source_type, source_ref, schedule, category, project, summary, people, sender, input_chars, read_chars) " +
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(
+    String(row.chatId),
+    "voice",
+    row.sourceRef || "",
+    "",
+    "",
+    "",
+    String(row.summary || "").replace(/<\/?[a-zA-Z]+>/g, "").slice(0, 500),
+    "",
+    row.sender || "",
+    row.inputChars || 0,
+    Math.min(row.inputChars || 0, 16000)
+  ).run();
+}
+
+// 저장된 최근 meeting 자료 조회.
+async function latestMeeting(env, chatId) {
+  try {
+    return await env.DB.prepare(
+      "SELECT id, file_id, filename, text, timed_text, full_minutes, " +
+      "(SELECT summary FROM insights i WHERE i.source_type = 'voice' AND i.source_ref = files.file_id ORDER BY id DESC LIMIT 1) AS summary " +
+      "FROM files WHERE chat_id = ? AND text != '' AND text NOT LIKE '[받아쓰기 실패%' " +
+      "AND (doc_type = 'meeting' OR filename LIKE '%.m4a' OR filename LIKE '%.ogg' OR filename LIKE '%.oga' " +
+      "OR filename LIKE '%.mp3' OR filename LIKE '%.wav' OR filename LIKE '%voice%' OR filename LIKE '%녹음%' " +
+      "OR filename LIKE '%.txt' OR filename LIKE '%.docx' OR filename LIKE '%.doc' OR filename LIKE '%.pdf') " +
+      "ORDER BY id DESC LIMIT 1"
+    ).bind(String(chatId)).first();
+  } catch (e) { console.error("minutes query error", e && e.message); return null; }
+}
+
+// 회의록 요청 접수 — 생성은 여기서 하지 않는다. 전사 존재만 확인하고 작업을 큐(KV)에 넣은 뒤
+// 즉시 안내한다. 실제 회의록 생성(LLM)은 매분 Cron(generateMinutes)이 처리한다.
+// (긴 전사의 회의록 생성도 웹훅 백그라운드 한도를 넘겨 멈추므로 Cron으로 분리.)
+export async function makeMinutesFromStored(env, chatId) {
+  // 가장 최근 녹음이 아직 받아쓰는 중이면, 옛 회의록을 내지 말고 안내(자동 도착).
+  let pending = null;
+  try {
+    pending = await env.DB.prepare(
+      "SELECT id FROM files WHERE chat_id = ? AND (text IS NULL OR text = '') AND r2_key != '' AND " +
+      VOICE_AUDIO_LIKE + " AND created_at >= datetime('now','-24 hours') ORDER BY id DESC LIMIT 1"
+    ).bind(String(chatId)).first();
+  } catch (e) { console.error("makeMinutes pending check error", e && e.message); }
+  const row = await latestMeeting(env, chatId);
+  if (pending && (!row || pending.id > row.id)) {
+    return sendMessage(env, chatId, "방금 보낸 녹음을 아직 받아쓰는 중입니다. 1~2분 뒤 회의록이 자동으로 도착합니다.");
+  }
+  if (!row || !row.text) {
+    return sendMessage(env, chatId, "최근 받아쓰기를 찾지 못했습니다. 녹음을 먼저 보내주세요.");
+  }
+  if (row.full_minutes) return sendMessage(env, chatId, await withMetaFollowup(env, chatId, row.file_id, row.full_minutes), { reply_markup: minutesKeyboard(row.id) });
+  // 상세본이 없으면 생성 작업을 큐에 넣는다. 다음 분 Cron(runVoiceQueue→generateMinutes)이 처리.
+  await qPush(env, "mj", String(chatId), true);
+  return sendMessage(env, chatId,
+    "상세 회의록을 생성 중입니다. 1~2분 후 /minutes 를 다시 보내주세요."
+  );
+}
+
+// Cron 이 호출 — 저장된 전사로 회의록을 생성해 전송.
+export async function generateMinutes(env, chatId) {
+  // 보강 메타가 대기 중이면 메타 반영 재작성을 우선 처리(웹훅 대신 Cron에서 LLM 실행).
+  const rmetaRaw = await env.STATE.get("rmeta:" + chatId);
+  if (rmetaRaw) {
+    await env.STATE.delete("rmeta:" + chatId);
+    try {
+      const { fileId, meta } = JSON.parse(rmetaRaw);
+      return await regenerateMinutesWithMeta(env, chatId, fileId, meta);
+    } catch (e) {
+      console.error("generateMinutes rmeta parse error", e && e.message);
+      // 파싱 실패 시 일반 회의록 생성으로 폴백(아래 진행)
+    }
+  }
+  const row = await latestMeeting(env, chatId);
+  if (!row || !row.text) {
+    return sendMessage(env, chatId, "최근 받아쓰기를 찾지 못했습니다. 녹음을 먼저 보내주세요.");
+  }
+  try {
+    if (row.full_minutes) return sendMessage(env, chatId, await withMetaFollowup(env, chatId, row.file_id, row.full_minutes), { reply_markup: minutesKeyboard(row.id) });
+    const sourceText = row.timed_text || row.text;
+    const minutes = await createMeetingMinutes(env, sourceText);
+    // full이 비면 short로 승격(JSON 잘림 등으로 full 누락 시 null 저장 방지)
+    const fullToSave = minutes.full || minutes.short || null;
+    await env.DB.prepare("UPDATE files SET doc_type = 'meeting', full_minutes = ? WHERE id = ?")
+      .bind(fullToSave, row.id).run();
+    try {
+      await saveMeetingInsight(env, { chatId, sourceRef: row.file_id, summary: minutes.short, sender: row.sender || "", inputChars: String(row.text || "").length });
+    } catch (e) { console.error("generateMinutes saveMeetingInsight error", e && e.message); }
+    try { await saveActionItems(env, fullToSave || minutes.short, row.id); } catch (e) { console.error("minutes action items", e && e.message); }
+    const out = await withMetaFollowup(env, chatId, row.file_id, fullToSave || minutes.short);
+    await sendMessage(env, chatId, out, { reply_markup: minutesKeyboard(row.id) });
+  } catch (e) {
+    console.error("generateMinutes error", e && (e.stack || e.message));
+    await sendMessage(env, chatId, "회의록 작성에 실패했습니다. 잠시 후 다시 '회의록'이라고 보내주세요.");
+  }
+}
+
+export async function regenerateMinutesWithMeta(env, chatId, fileId, metaText) {
+  const row = await env.DB.prepare(
+    "SELECT id, file_id, text FROM files WHERE file_id = ? AND text != '' ORDER BY id DESC LIMIT 1"
+  ).bind(String(fileId || "")).first();
+  if (!row || !row.text) {
+    return sendMessage(env, chatId, "보강할 회의록 원문을 찾지 못했습니다. 문서를 다시 보내주세요.");
+  }
+  try {
+    const minutes = await createMeetingMinutes(
+      env,
+      "추가 메타정보: " + String(metaText || "").trim() + "\n\n전사:\n" + row.text
+    );
+    const out = minutes.full || minutes.short;
+    await env.DB.prepare("UPDATE files SET doc_type = 'meeting', full_minutes = ? WHERE id = ?")
+      .bind(out || null, row.id).run();
+    await sendMessage(env, chatId, out || "회의록을 다시 작성하지 못했습니다.");
+  } catch (e) {
+    console.error("regenerateMinutesWithMeta error", e && (e.stack || e.message));
+    await sendMessage(env, chatId, "회의록 재작성에 실패했습니다. 잠시 후 다시 보내주세요.");
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "yeom-lab-local",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "yeom-lab 을 Cloudflare Workers 없이 로컬 PC에서 서버로 구동 (장폴링 + node-cron + 로컬 sqlite/파일 저장)",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "node-cron": "^3.0.3"
+  }
+}
