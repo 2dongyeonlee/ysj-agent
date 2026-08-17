@@ -15,12 +15,24 @@
   API 키도, 인터넷 전송도 필요 없습니다 — 텍스트가 이 PC 밖으로 나가지 않아 Claude API보다
   보안 면에서 유리합니다):
   1. https://ollama.com 에서 설치 프로그램 다운로드 후 설치
-  2. 설치 후 PowerShell/cmd 에서: `ollama pull qwen2.5:7b-instruct` (약 4.7GB 다운로드,
-     한 번만 하면 됨)
+  2. 설치 후 PowerShell/cmd 에서: `ollama pull qwen2.5:7b` (약 4.7GB 다운로드, 한 번만 하면 됨)
   3. Ollama는 설치 시 백그라운드 서비스로 자동 등록되어 PC 켜질 때 같이 켜집니다. 수동으로
      켜야 한다면 `ollama serve`
   - 참고: 7B 모델은 RAM 16GB 이상 권장(8GB에서도 동작은 하나 느릴 수 있음). PC 사양이
-    낮으면 더 작은 모델(`qwen2.5:3b-instruct`)로 바꿔도 됩니다 — `.env`의 `OLLAMA_MODEL` 수정.
+    낮으면 더 작은 모델(`qwen2.5:3b`)로 바꿔도 됩니다 — `.env`의 `OLLAMA_MODEL` 수정.
+- **whisper.cpp** (선택 — 녹음→회의록 기능을 쓸 때만. 이것도 API 키 없이 이 PC에서 돕니다):
+  1. https://github.com/ggml-org/whisper.cpp/releases 에서 `whisper-bin-x64.zip` 다운로드 후
+     압축 해제 (NVIDIA 그래픽카드가 있으면 `whisper-cublas-*-bin-x64.zip` 이 훨씬 빠름)
+  2. 모델 파일 다운로드 (브라우저로 그냥 접속하면 받아집니다):
+     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+     → 압축 푼 폴더에 같이 두기 (466MB. 더 정확하게 하려면 `ggml-large-v3-turbo.bin`,
+     1.5GB, 대신 느림)
+  3. ffmpeg 설치 (텔레그램 음성 형식 변환에 필요): https://www.gyan.dev/ffmpeg/builds/ 에서
+     `ffmpeg-release-essentials.zip` → 압축 해제 후 `bin` 폴더를 시스템 PATH에 추가
+  4. 봇과는 **별도 창**에서 계속 띄워둡니다:
+     `whisper-server.exe -m ggml-small.bin -l ko --convert --port 8080`
+  - 안 쓰실 거면 `.env` 의 `WHISPER_BASE_URL` 을 비우면 됩니다 (녹음 기능만 꺼지고
+    나머지는 정상 동작).
 
 ## 설치 및 실행
 
@@ -53,6 +65,7 @@ migrations: 18건 적용 완료
 |---|---|---|
 | 텔레그램 연결 | 웹훅(외부에서 서버로 접속) | 장폴링(서버가 텔레그램에 계속 물어봄) — 외부 노출 불필요 |
 | 텍스트 생성(분류·요약·브리핑·회의록) | Claude API (유료, 클라우드 전송) | 로컬 Ollama·Qwen2.5 (무료, PC 밖으로 전송 안 됨) |
+| 녹음 받아쓰기(STT) | AssemblyAI / OpenAI (유료, 클라우드 전송) | 로컬 whisper.cpp (무료, PC 밖으로 전송 안 됨) |
 | DB | D1 (Cloudflare) | 로컬 sqlite 파일 (`data/yeom-lab.db`) |
 | KV | Cloudflare KV | 같은 sqlite 파일의 `kv_store` 테이블 |
 | 파일 저장(녹음·문서 원본) | R2 | 로컬 폴더 (`data/r2/`) |
@@ -104,7 +117,10 @@ pm2-startup install   # PC 재부팅 시 자동 시작 (안내에 따라 진행)
   PowerShell에서 `ollama serve` 실행 후 다시 시도하세요. `ollama list` 로 모델이 실제
   받아져 있는지도 확인해보세요(없으면 `ollama pull qwen2.5:7b-instruct`).
 - **답변이 너무 느리거나 PC가 버벅임** → 모델이 PC 사양에 비해 큽니다. `.env`의
-  `OLLAMA_MODEL` 을 `qwen2.5:3b-instruct` 로 바꾸고 `ollama pull qwen2.5:3b-instruct` 로
-  받은 뒤 재시작하세요.
+  `OLLAMA_MODEL` 을 `qwen2.5:3b` 로 바꾸고 `ollama pull qwen2.5:3b` 로 받은 뒤 재시작하세요.
+- **녹음을 보내도 회의록이 안 옴** → whisper.cpp 서버가 떠 있는지 확인(별도 창에서
+  `whisper-server.exe ...` 실행 중이어야 함). 콘솔에 `local whisper STT error` 가 찍히면
+  메시지를 보고 판단하세요: `ECONNREFUSED` = 서버 꺼짐, `--convert` 관련 오류 = ffmpeg 미설치.
+  10분 녹음은 CPU에서 5~15분 걸리니 조금 기다려야 합니다.
 - **마이그레이션 오류로 시작이 안 됨** → `data/yeom-lab.db` 를 지우고(초기화됨) 다시
   `npm start` 하면 처음부터 다시 적용됩니다. 데이터가 있다면 먼저 백업하세요.

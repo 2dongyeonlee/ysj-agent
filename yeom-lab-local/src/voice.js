@@ -185,9 +185,51 @@ async function pollAssemblyAI(env, transcriptId) {
   return { status: data.status || "processing" };
 }
 
+// 로컬 whisper.cpp 서버로 받아쓰기 — API 키 불필요, 음성이 PC 밖으로 나가지 않는다.
+// 서버 실행 예: whisper-server.exe -m models\ggml-small.bin -l ko --convert --port 8080
+// (--convert 는 ogg/m4a 를 내부에서 16kHz WAV 로 변환해준다. PATH 에 ffmpeg 필요.)
+// 화자분리(speaker diarization)는 whisper.cpp 가 지원하지 않으므로 timed = plain 이다.
+// 회의록 프롬프트가 화자 라벨이 없을 때 '발언자 A' 식으로 복원하도록 이미 지시하고 있다.
+async function transcribeLocalWhisper(env, audioBuf, filename, timeoutMs) {
+  const baseUrl = env.WHISPER_BASE_URL;
+  if (!baseUrl) throw new Error("WHISPER_BASE_URL missing");
+  // 로컬 CPU 전사는 느리다(10분 녹음에 5~15분). 호출자의 짧은 제한시간을 그대로 쓰면
+  // 항상 실패하므로, 로컬 경로는 별도의 넉넉한 제한시간을 쓴다.
+  const signal = timeoutSignal(timeoutMs || 1800000);
+
+  const form = new FormData();
+  form.append("file", new Blob([audioBuf]), filename || "audio.ogg");
+  form.append("language", "ko");
+  form.append("response_format", "json");
+
+  const res = await fetch(baseUrl.replace(/\/+$/, "") + "/inference", {
+    method: "POST",
+    body: form,
+    signal,
+  });
+  if (!res.ok) {
+    throw new Error("local whisper failed " + res.status + ": " + (await res.text()).slice(0, 300));
+  }
+  const data = await res.json();
+  const t = String((data && data.text) || "").trim();
+  if (!t) throw new Error("local whisper returned empty transcript");
+  if (looksBadTranscript(t)) throw new Error("local whisper produced unusable transcript");
+  return { plain: t, timed: t };
+}
+
 // STT. timeoutMs 로 모델별 제한시간을 조절(큐는 넉넉히, 웹훅은 짧게).
+// 우선순위: 로컬 whisper.cpp → (키가 있으면) AssemblyAI → OpenAI.
 async function transcribe(env, audioBuf, filename, timeoutMs) {
   const t = timeoutMs || 24000;
+  if (env.WHISPER_BASE_URL) {
+    try {
+      return await transcribeLocalWhisper(env, audioBuf, filename, env.WHISPER_TIMEOUT_MS);
+    } catch (e) {
+      console.error("local whisper STT error", e && e.message);
+      // 클라우드 폴백 키가 하나도 없으면 여기서 끝내야 원인이 드러난다.
+      if (!env.ASSEMBLYAI_API_KEY && !env.OPENAI_API_KEY) throw e;
+    }
+  }
   if (env.ASSEMBLYAI_API_KEY) {
     try {
       return await transcribeAssemblyAI(env, audioBuf, filename, t);
@@ -394,7 +436,9 @@ export async function runVoiceQueue(env) {
   if (!hasWork) return; // 처리할 항목 없음 → KV put 없이 종료
 
   if (await env.STATE.get("vq:lock")) return; // 이미 처리 중
-  await env.STATE.put("vq:lock", "1", { expirationTtl: 300 });
+  // 로컬 whisper 전사는 10분 녹음에 5~15분이 걸린다. 락이 전사보다 먼저 풀리면 다음 틱이
+  // 같은 녹음을 다시 집어 시도횟수를 소진시키므로, 로컬 STT 일 때는 락을 넉넉히 잡는다.
+  await env.STATE.put("vq:lock", "1", { expirationTtl: env.WHISPER_BASE_URL ? 2400 : 300 });
   try {
     // 1) 회의록 작성 대기 작업 우선 처리(사용자가 기다리는 중). 한 번에 1건.
     const mjChat = await qShift(env, "mj");
@@ -497,7 +541,7 @@ export async function runVoiceQueue(env) {
       return;
     }
 
-    // OpenAI 폴백(키 없을 때, 짧은 녹음만 현실적)
+    // 동기 전사 경로 — 로컬 whisper.cpp(기본) 또는 OpenAI 폴백.
     let transcript = "", timedTranscript = "";
     try {
       const tr = await transcribe(env, audioBuf, row.filename, 240000);

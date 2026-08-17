@@ -2,8 +2,8 @@
 // 분류·요약·브리핑·회의록 프롬프트/로직은 전혀 바뀌지 않았다 — 실제 호출 대상만
 // Anthropic Claude API에서 로컬 Ollama(무료 오픈소스 LLM, PC에서 직접 실행)로 바꿨다.
 
-export const MODEL_FAST = "qwen2.5:7b-instruct"; // 분류·단순작업
-export const MODEL_SMART = "qwen2.5:7b-instruct"; // 요약·브리핑
+export const MODEL_FAST = "qwen2.5:7b"; // 분류·단순작업
+export const MODEL_SMART = "qwen2.5:7b"; // 요약·브리핑
 
 export async function callClaude(env, userText, system = "", model = MODEL_FAST, maxTokens = 800) {
   const baseUrl = env.OLLAMA_BASE_URL || "http://localhost:11434";

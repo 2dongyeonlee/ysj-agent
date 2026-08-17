@@ -48,6 +48,10 @@ async function main() {
   // 텍스트 생성(분류·요약·브리핑·회의록)은 로컬 Ollama가 담당 — API 키 불필요.
   env.OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
   env.OLLAMA_MODEL = process.env.OLLAMA_MODEL || "";
+  // 녹음 받아쓰기(STT)도 로컬 whisper.cpp 서버로 — API 키 불필요, 음성이 PC 밖으로 안 나감.
+  // 비워두면 STT 자체가 비활성(녹음→회의록만 안 됨. 나머지 기능은 정상).
+  env.WHISPER_BASE_URL = process.env.WHISPER_BASE_URL || "";
+  env.WHISPER_TIMEOUT_MS = parseInt(process.env.WHISPER_TIMEOUT_MS || "1800000", 10);
   // 선택 — 사진/PDF 문서 인식(docparse.js)만 아직 Anthropic Vision API를 씀. 안 쓰면 비워둬도 됨.
   env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
   env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
